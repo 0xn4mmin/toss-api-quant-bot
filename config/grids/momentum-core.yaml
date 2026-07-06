@@ -1,0 +1,33 @@
+# config/grids/momentum-core.yaml — §S10 탐색 범위 사전등록 표 (OF-05)
+# 이 표가 탐색의 전부다. 봉인(prereg.seal) 후 1칸이라도 수정하면 해시가 어긋나
+# 러너가 거부하고, 재탐색은 새 전략 id의 새 사전등록을 요구한다 (BT-02).
+# US 코어 (SIG-01/02)
+lookback_wk:
+  - 13
+  - 26
+  - 39
+  - 52
+skip_wk:
+  - 1
+  - 2
+  - 4
+abs_filter:
+  - true
+  - false
+n:
+  - 8
+  - 10
+exit_buffer:
+  - 1.5
+  - 2.0
+# 레짐 필터 (SIG-05) — sleeve별 독립 선택 금지, 공통 1세트
+ma_len:
+  - 100
+  - 150
+  - 200
+vix_threshold:                  # 절대값 계열만 사전등록 (계열 혼합 탐색 금지, §S10)
+  - 25
+  - 30
+e_min:
+  - 0
+  - 0.2

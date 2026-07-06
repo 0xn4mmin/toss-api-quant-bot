@@ -1,0 +1,24 @@
+# config/backtest.yaml — 백테스트 방법론·비용 상수 (IMPL-07 Phase 1: 코드에 수치 금지)
+version: 1
+
+methodology:
+  train_days: 756               # BT-03 — IS 3년 (거래일)
+  test_days: 252                # BT-03 — OOS 1년
+  step_days: 252                # BT-03 — 1년씩 rolling (anchored 아님)
+  rebalance_every_n_days: 5     # 주 1회 (INV-05 정합)
+  trading_days_per_year: 252
+  initial_capital_krw: 5000000  # §1 — 자본 ~500만원
+  bootstrap:
+    n_samples: 2000             # §S8 (b) — 블록 부트스트랩 표본 수
+    block_len: 20               # 자기상관 보존 블록 길이 (거래일)
+    seed: 20260706              # 재현성 — 동일 시드 재실행 = 결과 바이트 동일
+
+# BT-05 — 실측(md.commission·orderbook) 전의 보수 방향 기본값.
+# Phase 2에서 실측으로 갱신하고, 페이퍼 단계에서 실체결과 대사해 재갱신한다.
+costs:
+  commission_rate: 0.001        # 수수료율 (보수 기본값)
+  min_commission_krw: 100       # 주문 건별 최소 수수료 하한 (BT-G6의 소액 계좌 리스크)
+  slippage_rate: 0.002          # 스프레드/2 + 보수 마진
+  sell_tax_rate: 0.0018         # KR 증권거래세 — 정책 변수, 구현 시점 세율 확정 필요 (BT-05)
+  annual_gain_tax_rate: 0.22    # US 양도세 — 연간 실현이익 기본공제 초과분 (BT-05)
+  annual_deduction_krw: 2500000 # US 양도세 기본공제

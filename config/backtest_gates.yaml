@@ -1,0 +1,16 @@
+# config/backtest_gates.yaml — 게이트 합격 상수 (QUANTBOT-STRAT §S9 BT-G)
+# 이 값들은 파라미터가 아니라 게이트 상수다 — 백테스트가 정하는 값이 아니며,
+# 변경은 불변식과 동급 절차(사람이 직접 편집 + git 커밋)를 따른다.
+version: 1
+
+g1_max_oos_mdd: 0.15            # BT-G1 — OOS 연결 곡선 MDD ≤ 15% (INV-04 직결)
+g2_mdd_percentile: 95           # BT-G2 — 부트스트랩 MDD 분포의 판정 백분위
+g2_p95_mdd_max: 0.20            # BT-G2 — p95 MDD ≤ 20% (감내 상한)
+g2_stress_mdd_max: 0.20         # BT-G2 — 스트레스 창 구간 MDD ≤ 20% (§S8 c)
+g2_stress_windows:              # §S7 — 2020 폭락·2022 약세장 의무 포함
+  - "2020-02-01/2020-04-30"
+  - "2022-01-01/2022-12-31"
+g3_min_cagr: 0.0                # BT-G3 — 세후 OOS CAGR > 0
+g3_min_sharpe: 0.5              # BT-G3 — "현금보다 낫다"의 최소선
+g4_plateau_min_ratio: 0.7       # BT-G4 — 인접점 OOS 샤프 ≥ 선택점 × 70%
+g5_oos_is_min_ratio: 0.5        # BT-G5 — OOS 샤프 ≥ IS 샤프 × 50%

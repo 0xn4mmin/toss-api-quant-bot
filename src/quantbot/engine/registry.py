@@ -170,6 +170,53 @@ class Registry:
             raise ValueError(f"알 수 없는 테이블: {table!r}")
         return list(self._conn.execute(f"SELECT * FROM {table} ORDER BY id"))
 
+    def events(self, kind: str | None = None) -> list[dict]:
+        """이벤트를 payload 파싱된 dict로 반환 (id 오름차순)."""
+        sql = "SELECT id, kind, severity, payload, created_at FROM events"
+        args: tuple = ()
+        if kind is not None:
+            sql += " WHERE kind = ?"
+            args = (kind,)
+        return [
+            {"id": r[0], "kind": r[1], "severity": r[2],
+             "payload": json.loads(r[3]), "created_at": r[4]}
+            for r in self._conn.execute(sql + " ORDER BY id", args)
+        ]
+
+    def artifacts(
+        self, strategy_id: str | None = None, kind: str | None = None
+    ) -> list[dict]:
+        """아티팩트를 payload 파싱된 dict로 반환 (id 오름차순)."""
+        sql = "SELECT id, strategy_id, kind, sha256, payload, created_at FROM artifacts"
+        conds, args = [], []
+        if strategy_id is not None:
+            conds.append("strategy_id = ?")
+            args.append(strategy_id)
+        if kind is not None:
+            conds.append("kind = ?")
+            args.append(kind)
+        if conds:
+            sql += " WHERE " + " AND ".join(conds)
+        return [
+            {"id": r[0], "strategy_id": r[1], "kind": r[2], "sha256": r[3],
+             "payload": json.loads(r[4]), "created_at": r[5]}
+            for r in self._conn.execute(sql + " ORDER BY id", tuple(args))
+        ]
+
+    def transitions(self, strategy_id: str | None = None) -> list[dict]:
+        """전략 생명주기 전이 이력 (id 오름차순)."""
+        sql = ("SELECT id, strategy_id, from_state, to_state, reason, created_at"
+               " FROM strategy_transitions")
+        args: tuple = ()
+        if strategy_id is not None:
+            sql += " WHERE strategy_id = ?"
+            args = (strategy_id,)
+        return [
+            {"id": r[0], "strategy_id": r[1], "from_state": r[2],
+             "to_state": r[3], "reason": r[4], "created_at": r[5]}
+            for r in self._conn.execute(sql + " ORDER BY id", args)
+        ]
+
     @property
     def connection(self) -> sqlite3.Connection:
         """테스트·대사(reconcile)용 저수준 접근. 쓰기 시도는 트리거가 거부한다."""
