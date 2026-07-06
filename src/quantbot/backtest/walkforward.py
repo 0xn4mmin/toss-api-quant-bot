@@ -113,9 +113,8 @@ class WalkForwardResult:
     oos_dates: list[str]
     selected_params: dict
     # BT-G4 평탄 지대 판정 입력 — 탐색 중 이미 계산된 IS 점수만 사용 (OOS 추가 접근 없음).
-    # 2026-07-06 소유자 결정: 이웃 평탄성을 OOS로 재면 OOS-1회 규율과 경계가 흐려지므로
-    # 폴드별 IS 샤프의 평균으로 측정한다 (QUANTBOT-STRAT §S9 BT-G4의 'OOS 샤프' 문구는
-    # 스펙 개정 대상).
+    # QUANTBOT-STRAT v1.1 §S9 개정: 이웃 평탄성은 폴드별 IS 샤프의 평균으로 측정한다
+    # (OOS로 재면 BT-02의 OOS-1회 규율과 충돌).
     selected_mean_is_sharpe: float
     neighbor_mean_is_sharpes: list[float]
     n_configs_tried: int                # registry 이벤트 수와 일치해야 함

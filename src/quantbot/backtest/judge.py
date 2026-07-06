@@ -194,8 +194,7 @@ def evaluate_oos(
             and all(v <= gates.g2_stress_mdd_max for v in stress.values())
         ),
         "BT-G3": oos_cagr > gates.g3_min_cagr and oos_sharpe >= gates.g3_min_sharpe,
-        # BT-G4 — 평탄 지대는 IS 폴드 평균으로 판정 (2026-07-06 소유자 결정:
-        # 이웃을 OOS로 재면 OOS-1회 규율이 흐려진다. §S9 문구 개정 대상).
+        # BT-G4 — 평탄 지대는 IS 폴드 평균으로 판정 (QUANTBOT-STRAT v1.1 §S9).
         "BT-G4": (
             wf.selected_mean_is_sharpe > 0.0
             and all(
