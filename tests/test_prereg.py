@@ -74,6 +74,31 @@ def test_sealed_artifact_is_physically_immutable(registry, uptrend_store):
         registry.connection.execute("DELETE FROM artifacts WHERE kind = 'prereg'")
 
 
+def test_oos_is_simulated_exactly_once_per_fold(registry, uptrend_store, monkeypatch):
+    """구조 검사: OOS(test 구간) 시뮬레이션은 폴드별 best 1회가 전부다 —
+    평탄 지대(BT-G4) 판정이 OOS를 추가로 열지 않는다."""
+    rng = _range(uptrend_store)
+    prereg.seal(registry, SID, GRID, rng, walkforward.folds_spec(SMALL_METH))
+
+    calls: list[tuple[int, int]] = []
+    real_simulate = walkforward.simulate
+
+    def counting(store, start, end, *args, **kwargs):
+        calls.append((start, end))
+        return real_simulate(store, start, end, *args, **kwargs)
+
+    monkeypatch.setattr(walkforward, "simulate", counting)
+    res = run_walkforward(
+        registry, uptrend_store, SID, GRID, rng,
+        momentum_top1, LOW_COSTS, SMALL_METH,
+    )
+    n_grid = len(walkforward.grid_configs(GRID))
+    # 총 호출 = IS 탐색(폴드 × 조합) + 폴드별 OOS 1회 — 그 외는 존재하지 않는다
+    assert len(calls) == n_grid * len(res.folds) + len(res.folds)
+    for f in res.folds:
+        assert calls.count((f.test_start, f.test_end - 1)) == 1
+
+
 def test_every_tried_config_is_appended_to_registry(registry, uptrend_store):
     """BT-G7 — n_configs_tried는 러너가 registry에 남긴 이벤트 수다."""
     rng = _range(uptrend_store)

@@ -108,12 +108,16 @@ class WalkForwardResult:
     folds: list[Fold]
     per_fold_best: list[dict]
     per_fold_is_sharpe: list[float]
-    oos_sims: list[SimResult]           # 폴드별 best 파라미터의 OOS 재생
+    oos_sims: list[SimResult]           # 폴드별 best 파라미터의 OOS 재생 — 유일한 OOS 접근
     oos_returns: np.ndarray             # 연결 곡선의 일일 수익률
     oos_dates: list[str]
     selected_params: dict
-    neighbor_oos_sharpes: list[float]   # 선택점 이웃들의 OOS 샤프 (BT-G4)
-    selected_oos_sharpe: float
+    # BT-G4 평탄 지대 판정 입력 — 탐색 중 이미 계산된 IS 점수만 사용 (OOS 추가 접근 없음).
+    # 2026-07-06 소유자 결정: 이웃 평탄성을 OOS로 재면 OOS-1회 규율과 경계가 흐려지므로
+    # 폴드별 IS 샤프의 평균으로 측정한다 (QUANTBOT-STRAT §S9 BT-G4의 'OOS 샤프' 문구는
+    # 스펙 개정 대상).
+    selected_mean_is_sharpe: float
+    neighbor_mean_is_sharpes: list[float]
     n_configs_tried: int                # registry 이벤트 수와 일치해야 함
 
 
@@ -142,6 +146,7 @@ def run_walkforward(
 
     per_fold_best: list[dict] = []
     per_fold_is_sharpe: list[float] = []
+    is_scores_by_config: dict[str, list[float]] = {}  # 평탄 지대 판정의 원천 (BT-G4)
     tried = 0
     for k, fold in enumerate(folds):
         best_params, best_score = None, -np.inf
@@ -158,6 +163,7 @@ def run_walkforward(
                  "is_sharpe": score},
             )
             tried += 1
+            is_scores_by_config.setdefault(prereg.canonical_json(params), []).append(score)
             if score > best_score:
                 best_params, best_score = params, score
         per_fold_best.append(best_params)
@@ -175,16 +181,13 @@ def run_walkforward(
 
     selected = select_plateau_median(grid, per_fold_best)
 
-    def oos_sharpe_of(params: dict) -> float:
-        rets = np.concatenate([
-            simulate(store, f.test_start, f.test_end - 1,
-                     signal_fn, params, cost_model, m).returns()
-            for f in folds
-        ])
-        return sharpe(rets, m.trading_days_per_year)
+    # BT-G4 입력 — 탐색에서 이미 나온 IS 점수의 폴드 평균. OOS 시뮬레이션은 위의
+    # 폴드별 best 1회가 전부이며, 선택점·이웃을 위해 OOS를 다시 열지 않는다.
+    def mean_is_sharpe_of(params: dict) -> float:
+        return float(np.mean(is_scores_by_config[prereg.canonical_json(params)]))
 
-    selected_oos_sharpe = oos_sharpe_of(selected)
-    neighbor_sharpes = [oos_sharpe_of(nb) for nb in grid_neighbors(grid, selected)]
+    selected_mean_is = mean_is_sharpe_of(selected)
+    neighbor_mean_is = [mean_is_sharpe_of(nb) for nb in grid_neighbors(grid, selected)]
 
     return WalkForwardResult(
         folds=folds,
@@ -194,7 +197,7 @@ def run_walkforward(
         oos_returns=oos_returns,
         oos_dates=oos_dates,
         selected_params=selected,
-        neighbor_oos_sharpes=neighbor_sharpes,
-        selected_oos_sharpe=selected_oos_sharpe,
+        selected_mean_is_sharpe=selected_mean_is,
+        neighbor_mean_is_sharpes=neighbor_mean_is,
         n_configs_tried=tried,
     )

@@ -194,11 +194,13 @@ def evaluate_oos(
             and all(v <= gates.g2_stress_mdd_max for v in stress.values())
         ),
         "BT-G3": oos_cagr > gates.g3_min_cagr and oos_sharpe >= gates.g3_min_sharpe,
+        # BT-G4 — 평탄 지대는 IS 폴드 평균으로 판정 (2026-07-06 소유자 결정:
+        # 이웃을 OOS로 재면 OOS-1회 규율이 흐려진다. §S9 문구 개정 대상).
         "BT-G4": (
-            wf.selected_oos_sharpe > 0.0
+            wf.selected_mean_is_sharpe > 0.0
             and all(
-                nb >= wf.selected_oos_sharpe * gates.g4_plateau_min_ratio
-                for nb in wf.neighbor_oos_sharpes
+                nb >= wf.selected_mean_is_sharpe * gates.g4_plateau_min_ratio
+                for nb in wf.neighbor_mean_is_sharpes
             )
         ),
         "BT-G5": oos_sharpe >= is_sharpe_mean * gates.g5_oos_is_min_ratio,
@@ -234,8 +236,9 @@ def evaluate_oos(
         "total_taxes": sum(r.total_taxes for r in wf.oos_sims),
         "n_folds": len(wf.folds),
         "per_fold_best": wf.per_fold_best,
-        "selected_oos_sharpe": wf.selected_oos_sharpe,
-        "neighbor_oos_sharpes": wf.neighbor_oos_sharpes,
+        "plateau_basis": "is_fold_mean",  # BT-G4 판정 근거의 출처 명시
+        "selected_mean_is_sharpe": wf.selected_mean_is_sharpe,
+        "neighbor_mean_is_sharpes": wf.neighbor_mean_is_sharpes,
     }
 
     payload = {
