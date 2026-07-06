@@ -221,17 +221,35 @@ id 필요). 지금이 그리드를 바꿀 마지막 기회다.
 - [ ] **H1 레짐 ablation 리포트**: 레짐 on/off 두 곡선 비교(§S8) — 필터가 실제로
   MDD를 낮추는지. 안 낮추면 통과했어도 필터 재설계
 
-## 11. 그 후 발전 로드맵 (합의된 우선순위 — 각각 세션에 요청)
+## 11. 발전 로드맵 — 1·2번 구현 완료 (STRAT v1.4), 판정은 소유자 실행
 
-1. 변동성 타게팅 오버레이 (MDD·샤프 개선 문헌 최다)
-2. 자산군 분산 추세추종 (채권·금 ETF sleeve)
+1. ~~변동성 타게팅 오버레이~~ ✅ 구현됨 — 전략 파일 `sizing.vol_target_annual`/
+   `vol_lookback_days` 선언으로 켠다 (dual-momentum.v1.yaml에 예시)
+2. ~~자산군 듀얼 모멘텀~~ ✅ 슬롯·전략 파일(draft)·그리드 구현됨. 판정 절차:
+   ```
+   $ uv run quantbot fetch-candles --symbols SPY,EFA,TLT,GLD,IEF \
+       --days 1800 --out var/data/assets_raw.csv
+   $ uv run quantbot import-vix --data var/data/assets_raw.csv \
+       --cboe-csv var/data/VIX_History.csv --out var/data/assets.csv
+   $ uv run quantbot backtest --strategy strategies/dual-momentum.v1.yaml \
+       --grid config/grids/dual-momentum.yaml --data var/data/assets.csv \
+       --allow-no-regime
+   ```
+   (dual momentum은 자체 절대 필터가 레짐 역할 — --allow-no-regime이 맞다)
+   ⚠ **실행 전 12번의 INV-01 ETF 캡 결정 필수** — 미결정 상태로 돌리면 실효
+   노출이 top_n×12%로 잘려 판정이 왜곡된다
 3. KR flows sleeve (표본 3년 도달 시 — 이 봇의 고유 엣지)
 4. 멀티 전략 + 규칙 기반 메타 배분
-- 기대치 눈금: 세후 CAGR 한 자릿수 후반~10%대 초반 + MDD ≤15%가 "성공".
-  연 수십%를 보이는 백테스트는 축하가 아니라 **의심**(과적합·편향) 대상
+- 심어진 지식의 전체 대장: `docs/INVESTMENT_KNOWLEDGE.md` (근거·코드 위치·
+  의도적 배제 목록·기대치 눈금)
 
 ## 12. 미확정 값·잔여 결정 (시기 도래 시)
 
+- [ ] **INV-01 광범위 ETF 캡 결정** (11-2 전제): 종목당 12% 캡은 개별 주식용 —
+  SPY·TLT 같은 분산형 ETF에 예외/상향(예: 지수 ETF 50%)을 둘지. invariants.yaml
+  (ARCH §4) 개정 사안이라 소유자만 결정 가능. 결정하면 세션이 검증 로직과 함께 반영
+- [ ] GLD·TLT 등 ETF의 leverageFactor 실측 확인 (`api-verify` 후 stocks 조회) —
+  null이면 INV-11 판정 불가로 자동 승인에서 빠진다 (1배 ETF는 "1.0"이어야 정상)
 - [ ] LC-G3 괴리 허용범위 (8-1 — 페이퍼 시작 전 필수)
 - [ ] INV-07(-3%)/09(20회)/10(100만원) — live 승격 전 재검토 약속
 - [ ] watcher 임계(하트비트 90s·연속 오류 5회) — 운영 데이터로 보정

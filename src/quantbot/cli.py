@@ -220,24 +220,42 @@ def cmd_import_vix(args: argparse.Namespace) -> int:
 
 
 def _grid_signal_builder(
-    strategy, tdpw: int,
+    strategy, tdpw: int, tdpy: int,
     index_symbol: str | None = None,
     vix_symbol: str | None = None,
 ):
     """그리드 조합(주 단위 선언)을 슬롯 파라미터(거래일)로 번역하는 SignalFn.
 
-    index/vix 심볼이 주어지면 그리드의 레짐 파라미터(ma_len·vix_threshold·e_min)와
-    전략 파일의 caution_exposure를 함께 배선한다 — 레짐 필터는 MDD 예산의 첫
-    방어선(§S4)이라 백테스트에서 빠지면 판정 자체가 왜곡된다.
+    전략 파일의 슬롯 선언으로 빌더를 고른다: dual_momentum(v1.4 자산군 로테이션)
+    또는 us_core(모멘텀+레짐). 사이징의 vol_target 선언(전략 확정값, OF-03)이
+    있으면 오버레이로 배선한다.
     """
-    from quantbot.strategy.slots.pipeline import build_us_core_signal
+    from quantbot.strategy.slots.pipeline import (
+        build_dual_momentum_signal,
+        build_us_core_signal,
+    )
 
+    vt = None
+    if strategy.sizing.vol_target_annual is not None:
+        vt = (strategy.sizing.vol_target_annual,
+              strategy.sizing.vol_lookback_days, tdpy)
+    slots_declared = {d.slot for d in strategy.signals}
     regime_decl = next(
         (d for d in strategy.signals if d.slot == "regime_filter"), None
     )
 
     def signal_fn_factory(cap: float):
         def signal_fn(view, params):
+            if "dual_momentum" in slots_declared:
+                slot_params = {
+                    "lookback": int(params["lookback_wk"]) * tdpw,
+                    "skip": int(params.get("skip_wk", 0)) * tdpw,
+                    "top_n": int(params["top_n"]),
+                }
+                fn = build_dual_momentum_signal(
+                    slot_params, cap=cap, vol_target_spec=vt,
+                )
+                return fn(view, None)
             slot_params = {
                 "lookback": int(params["lookback_wk"]) * tdpw,
                 "skip": int(params["skip_wk"]) * tdpw,
@@ -257,6 +275,7 @@ def _grid_signal_builder(
             fn = build_us_core_signal(
                 slot_params, cap=cap,
                 index_symbol=index_symbol, vix_symbol=vix_symbol,
+                vol_target_spec=vt,
             )
             return fn(view, None)
         return signal_fn
@@ -309,7 +328,9 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         if s and s not in store.symbols:
             raise SystemExit(f"데이터에 {s} 열이 없다 — fetch-candles로 포함시켜라")
 
-    signal_fn = _grid_signal_builder(strategy, tdpw, index_symbol, vix_symbol)(cap)
+    signal_fn = _grid_signal_builder(
+        strategy, tdpw, meth.trading_days_per_year, index_symbol, vix_symbol
+    )(cap)
 
     with Registry(Path(args.var_dir) / "registry.db") as registry:
         sha = prereg.seal(registry, sid, grid, data_range,

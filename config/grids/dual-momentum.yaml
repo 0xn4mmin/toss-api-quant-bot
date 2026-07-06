@@ -1,0 +1,11 @@
+# config/grids/dual-momentum.yaml — §S10 방식 사전등록 표 (STRAT v1.4)
+# 거친 그리드 6조합 — 자유도 절약이 원칙 (OF-05). 봉인 후 수정 불가 (BT-02).
+lookback_wk:
+  - 13
+  - 26
+  - 52
+top_n:
+  - 1
+  - 2
+skip_wk:
+  - 0

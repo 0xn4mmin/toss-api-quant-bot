@@ -1,0 +1,46 @@
+# strategies/dual-momentum.v1.yaml — 자산군 듀얼 모멘텀 (STRAT v1.4, draft)
+# 상대 모멘텀 상위 top_n ∩ 절대 모멘텀(>0), 미달 시 전액 현금(MDD 방어의 핵심).
+# 변동성 타게팅 오버레이 선언 — 전략 확정값, 탐색 금지 (OF-03).
+#
+# ⚠ INV-01 상호작용 (소유자 결정 대기): 종목당 12% 캡은 개별 주식용 설계라,
+#   top_n=2면 자산당 50% 목표가 12%로 클리핑되고 잔여는 현금이 된다.
+#   광범위 지수 ETF에 캡 예외/상향을 둘지는 invariants(ARCH §4) 개정 사안 —
+#   결정 전까지 이 전략의 실효 노출은 top_n × 12% 다. (TODO.md 12번)
+meta:
+  id: dual-momentum
+  version: 1
+  author: human
+universe:
+  assets:
+    source: whitelist
+    max_symbols: 5              # 예: SPY(미국주식)·EFA(선진국)·TLT(장기채)·GLD(금)·IEF(중기채)
+signals:
+  - slot: dual_momentum
+    inputs:
+      - candles:SPY,EFA,TLT,GLD,IEF   # 공식 API candles (adjusted=true)
+    params:
+      lookback_wk: 26           # [탐색]
+      skip_wk: 0                # [탐색 아님 — 자산군 로테이션은 스킵 관행 없음]
+      top_n: 2                  # [탐색]
+entry_exit:
+  entry:
+    rule_slot: rank_top_n
+    params:
+      n: 2                      # top_n과 일치
+  exit:
+    rule_slot: rank_drop
+    params:
+      exit_buffer: 1.0          # 로테이션 계열 — 히스테리시스 없음 (매기 재선정)
+    stop_loss_pct: 0.10         # 고정 — 서킷브레이커(INV-07) 독립 백업
+sizing:
+  scheme: equal_weight_capped
+  sleeves:
+    assets: 1.0
+  no_trade_band: 0.02
+  order_unit: fractional
+  vol_target_annual: 0.10      # v1.4 오버레이 — 연 10% 목표, 확정값 (OF-03)
+  vol_lookback_days: 60
+cadence:
+  rebalance: weekly
+  execution_window:
+    us: "23:00-00:30 KST"

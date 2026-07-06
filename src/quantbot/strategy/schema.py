@@ -55,7 +55,7 @@ class UniverseLeg(_Decl):
 
 
 class SignalDecl(_Decl):
-    slot: Literal["trend_score", "regime_filter", "kr_flows_score"]
+    slot: Literal["trend_score", "regime_filter", "kr_flows_score", "dual_momentum"]
     inputs: list[str]
     params: dict[str, float | int | bool | str]
 
@@ -87,6 +87,9 @@ class Sizing(_Decl):
     sleeves: dict[str, float]
     no_trade_band: float
     order_unit: Literal["whole", "fractional"]  # v1.1 결정 2 — 선언값, 탐색 금지
+    # v1.4 — 변동성 타게팅 오버레이 (선택). 전략 확정값·탐색 금지 (OF-03).
+    vol_target_annual: float | None = None
+    vol_lookback_days: int | None = None
 
     @model_validator(mode="after")
     def _sleeves_sum_to_one(self) -> "Sizing":
@@ -99,6 +102,13 @@ class Sizing(_Decl):
             raise ValueError("sleeve 비중은 양수여야 한다")
         if not (0.0 <= self.no_trade_band < 1.0):
             raise ValueError(f"no_trade_band ∈ [0,1): {self.no_trade_band}")
+        if (self.vol_target_annual is None) != (self.vol_lookback_days is None):
+            raise ValueError("vol_target_annual과 vol_lookback_days는 함께 선언한다")
+        if self.vol_target_annual is not None:
+            if not (0.0 < self.vol_target_annual <= 1.0):
+                raise ValueError(f"vol_target_annual ∈ (0,1]: {self.vol_target_annual}")
+            if self.vol_lookback_days < 2:
+                raise ValueError(f"vol_lookback_days ≥ 2: {self.vol_lookback_days}")
         return self
 
 

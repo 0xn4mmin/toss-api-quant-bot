@@ -15,7 +15,26 @@ from typing import Mapping
 
 import numpy as np
 
-from quantbot.strategy.slots import regime, rules, trend_score
+from quantbot.strategy.slots import dual_momentum, regime, rules, trend_score, vol_target
+
+VolTarget = tuple[float, int, int]  # (연 목표 변동성, 룩백 거래일, 연간 거래일)
+
+
+def _basket_vol_scalar(
+    closes_by_symbol: Mapping[str, np.ndarray], vt: VolTarget
+) -> float:
+    """선택 종목 동일가중 바스켓의 실현변동성으로 노출 스칼라 산출 (§S5 v1.4)."""
+    annual_target, lookback, tdpy = vt
+    need = lookback + 1
+    usable = [np.asarray(c, dtype=float)[-need:]
+              for c in closes_by_symbol.values() if len(c) >= need]
+    if not usable:
+        return 1.0  # 측정 불가 — 스케일하지 않음 (상한 1.0이 구조적 방어)
+    rets = np.mean([c[1:] / c[:-1] - 1.0 for c in usable], axis=0)
+    realized = vol_target.realized_vol_annual(rets, tdpy)
+    if realized <= 0.0:
+        return 1.0
+    return min(1.0, annual_target / realized)
 
 
 def cap_clip_redistribute(weights: dict[str, float], cap: float) -> dict[str, float]:
@@ -46,6 +65,7 @@ def build_us_core_signal(
     cap: float,
     index_symbol: str | None = None,
     vix_symbol: str | None = None,
+    vol_target_spec: VolTarget | None = None,
 ):
     """US 코어 시그널 함수 (SIG-02) — Phase 1 러너의 SignalFn 시그니처와 호환.
 
@@ -82,9 +102,48 @@ def build_us_core_signal(
                 float(p["e_min"]),
                 float(p["caution_exposure"]),
             )
+        if vol_target_spec is not None:  # v1.4 오버레이 — 스칼라 ≤ 1이라 캡 보존
+            exposure *= _basket_vol_scalar(
+                {s: closes[s] for s in selection}, vol_target_spec
+            )
         if exposure <= 0.0:
             return {}
         equal = exposure / len(selection)   # §S5 1단: sleeve 내 동일가중
         return cap_clip_redistribute({s: equal for s in selection}, cap)
+
+    return signal
+
+
+def build_dual_momentum_signal(
+    params: Mapping[str, object],
+    cap: float,
+    vol_target_spec: VolTarget | None = None,
+):
+    """자산군 듀얼 모멘텀 시그널 (STRAT v1.4) — Phase 1 러너 SignalFn 호환.
+
+    params: lookback, top_n, skip(선택). 비중은 1/top_n — 절대 필터에 걸린
+    슬롯은 현금으로 남는다(Antonacci의 현금 도피가 MDD 방어의 핵심).
+    주의: 단일 ETF 고비중은 INV-01(12% 캡)과 상호작용한다 — 캡은 호출자
+    (엔진 invariants)가 주입하고, 클리핑 잔여는 현금이 된다.
+    """
+    def signal(view, p_override: Mapping[str, object] | None = None) -> dict[str, float]:
+        p = dict(params)
+        if p_override:
+            p.update(p_override)
+        closes = {s: view.close(s) for s in view.symbols}
+        top_n = int(p["top_n"])
+        selection = dual_momentum.dual_momentum_select(
+            closes, lookback=int(p["lookback"]), top_n=top_n,
+            skip=int(p.get("skip", 0)),
+        )
+        if not selection:
+            return {}  # 절대 필터 전멸 — 전액 현금
+        exposure = 1.0
+        if vol_target_spec is not None:
+            exposure = _basket_vol_scalar(
+                {s: closes[s] for s in selection}, vol_target_spec
+            )
+        per_asset = exposure / top_n  # 미선택 슬롯 = 현금
+        return cap_clip_redistribute({s: per_asset for s in selection}, cap)
 
     return signal
