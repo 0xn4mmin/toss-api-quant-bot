@@ -10,10 +10,28 @@ execution_window:
 telegram:
   token_path: "var/secrets/telegram_token"
 
-# 어댑터 실행 정책 (IMPL-03) — 수치는 코드가 아니라 여기서 주입
+# 어댑터 실행 정책 (IMPL-03 v1.1, 이중 소스) — 수치는 코드가 아니라 여기서 주입
 adapter:
-  binary: "tossctl"
-  timeout_s: 30
-  max_retries: 2              # 조회 계열만 — 주문 계열은 구조적으로 재시도 0 (proc.py)
-  backoff_base_s: 0.5         # 지수 백오프 기저
-  rate_min_interval_s: 0.35   # 호출 간 최소 간격 (RISK-01 호출량 예의)
+  official:                    # 공식 Open API — 실자금 경로 100%
+    base_url: "https://openapi.tossinvest.com"
+    client_id_path: "var/secrets/toss_client_id"          # git 금지·LLM 접근 불가 (ISO)
+    client_secret_path: "var/secrets/toss_client_secret"
+    timeout_s: 10
+    max_retries: 2             # 조회(GET)만 — 주문 표면은 Phase 4에서 무재시도+멱등키
+    backoff_base_s: 0.5
+    rate_limits_tps:           # 공식 문서 Rate Limits 표 (그룹별 초당 허용)
+      AUTH: 5
+      ACCOUNT: 1
+      ASSET: 5
+      STOCK: 5
+      MARKET_INFO: 3
+      MARKET_DATA: 10
+      MARKET_DATA_CHART: 5
+      ORDER_HISTORY: 5
+      ORDER_INFO: 6
+  tossctl:                     # 비공식 CLI — 읽기 전용 보조 (flows·지수·스크리너)
+    binary: "tossctl"
+    timeout_s: 30
+    max_retries: 2
+    backoff_base_s: 0.5
+    rate_min_interval_s: 0.35  # 호출 간 최소 간격 (RISK-01 호출량 예의)

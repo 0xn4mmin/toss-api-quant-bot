@@ -42,10 +42,15 @@ COMPOSITION_ROOTS: frozenset[str] = frozenset({"quantbot.cli"})
 
 # 규칙 2·4·5: 모듈 → 그 모듈을 import할 수 있는 유일한 모듈들
 EXCLUSIVE_IMPORTERS: dict[str, frozenset[str]] = {
-    "subprocess": frozenset({"quantbot.adapter.proc"}),
-    # Phase 2(조회 표면): 주문 경로는 어디서도 import 불가.
+    # 이중 소스 (v1.1): subprocess는 tossctl 실행기에서만, HTTP는 공식 클라이언트
+    # (와 Phase 6 텔레그램)에서만 — 네트워크·프로세스 접점의 물리적 격리.
+    "subprocess": frozenset({"quantbot.adapter.tossctl.proc"}),
+    "urllib.request": frozenset(
+        {"quantbot.adapter.official.http", "quantbot.interface.telegram"}
+    ),
+    # 조회 Phase: 주문 표면은 어디서도 import 불가.
     # Phase 4에서 frozenset({"quantbot.engine.gate"}) 단독 허용으로 완화한다.
-    "quantbot.adapter.order": frozenset(),
+    "quantbot.adapter.official.order": frozenset(),
     "quantbot.strategy.translator": frozenset(),  # ISO-02: 별도 프로세스로만
 }
 
@@ -54,13 +59,14 @@ EXCLUSIVE_PATH_LITERALS: dict[str, frozenset[str]] = {
     "invariants.yaml": frozenset({"quantbot.engine.invariants"}),
 }
 
-# 규칙 6: tossctl 주문 네임스페이스 토큰 "order"는 아래 모듈 밖에 존재할 수 없다 —
-# 조회 표면(md/mkt/acct/ledger/health/wl)이 주문 명령을 조립하는 것 자체가 불가능하다.
-# (proc은 주문 계열 재시도 금지·차단 가드에 토큰이 필요하고, order.py는 GATE 전용 표면)
+# 규칙 6 (v1.1): "비공식 API로 실주문"은 표현 불가능해야 한다 —
+# (a) quantbot.adapter.tossctl 하위에는 'order'를 포함하는 문자열 상수 자체가
+#     존재할 수 없다 (대소문자 무관 부분 문자열 — 가장 강한 형태).
+# (b) 나머지 adapter에서는 주문 명령 토큰("order" 정확 일치·접두)이
+#     official/order.py(GATE 전용, Phase 4) 밖에 존재할 수 없다.
 ORDER_TOKEN = "order"
-ORDER_TOKEN_ALLOWED: frozenset[str] = frozenset(
-    {"quantbot.adapter.proc", "quantbot.adapter.order"}
-)
+TOSSCTL_SUBTREE = "quantbot.adapter.tossctl"
+ORDER_TOKEN_ALLOWED: frozenset[str] = frozenset({"quantbot.adapter.official.order"})
 
 
 def _module_name(path: Path) -> str:
@@ -189,8 +195,25 @@ def test_invariants_path_literal_is_exclusive():
     assert not violations, "invariants 경로 접근 위반 (ISO-01):\n" + "\n".join(violations)
 
 
+def test_order_token_impossible_in_tossctl_subtree():
+    """tossctl 어댑터 하위에는 'order'를 품은 문자열 상수가 존재조차 불가능하다 —
+    "비공식 API로 실주문"이 표현 불가능한 코드 (v1.1 결정 1)."""
+    violations: list[str] = []
+    for name, path, tree in ALL_MODULES:
+        if not _is_within(name, TOSSCTL_SUBTREE):
+            continue
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and ORDER_TOKEN in node.value.lower()
+            ):
+                violations.append(f"{name}:{node.lineno} {node.value!r}  ({path})")
+    assert not violations, "tossctl 하위 'order' 문자열 발견:\n" + "\n".join(violations)
+
+
 def test_order_command_token_is_confined():
-    """조회 계층 어디에도 'order' 명령 토큰이 없다 — 주문 명령 조립이 표현 불가능."""
+    """어댑터 나머지 표면에도 주문 명령 토큰이 없다 — GATE 전용 표면(Phase 4)만 예외."""
     violations: list[str] = []
     for name, path, tree in ALL_MODULES:
         if name in ORDER_TOKEN_ALLOWED or not _is_within(name, "quantbot.adapter"):
@@ -203,6 +226,14 @@ def test_order_command_token_is_confined():
             ):
                 violations.append(f"{name}:{node.lineno} {node.value!r}  ({path})")
     assert not violations, "'order' 토큰 격리 위반:\n" + "\n".join(violations)
+
+
+def test_official_query_client_has_no_generic_post():
+    """공식 HTTP 클라이언트의 공개 표면은 GET 하나 — 범용 POST 경로가 존재하지 않는다."""
+    from quantbot.adapter.official.http import OpenApiClient
+
+    public = {m for m in dir(OpenApiClient) if not m.startswith("_")}
+    assert public == {"get"}, f"예상 밖 공개 표면: {public}"
 
 
 def test_composition_root_still_obeys_exclusive_rules():

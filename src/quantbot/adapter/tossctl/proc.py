@@ -1,17 +1,15 @@
-"""tossctl subprocess 실행기 (IMPL-03, ARCH-02) — 호출의 물리학.
+"""tossctl subprocess 실행기 (IMPL-03 v1.1) — 읽기 전용 조회의 물리학.
 
-프로젝트에서 subprocess를 import할 수 있는 유일한 모듈 (IMPL-02 장치 2,
-tests/test_architecture.py가 강제).
+프로젝트에서 subprocess를 import할 수 있는 유일한 모듈 (IMPL-02 장치 2).
 
 구조로 강제되는 것:
 - 인자는 배열로만 조립 — 셸 문자열 경로가 없어 인젝션이 표현 불가능하다.
-- 주문 계열(첫 토큰 "order")은 재시도 0회가 정책이 아니라 attempts_for()의
-  반환값이다 — 중복 주문이 실패보다 나쁘다 (§I3).
-- Phase 2 조회 표면에서 주문 네임스페이스는 실행 자체가 차단된다
-  (enable_order_namespace 기본 False — Phase 4의 gate 전용 표면만 켠다).
-- 수치(타임아웃·재시도·간격)는 config/runtime.yaml adapter 섹션 주입.
+- 명령 allowlist — 첫 토큰이 조회 네임스페이스가 아니면 실행 자체가 거부된다.
+  주문 명령은 allowlist에 없고, 이 파일 어디에도 그 토큰이 존재하지 않는다
+  (아키텍처 테스트가 AST로 강제). "비공식 API로 실주문"은 표현 불가능한 프로그램이다.
+- 수치(타임아웃·재시도·간격)는 config/runtime.yaml adapter.tossctl 섹션 주입.
 
-push listen용 JSONL 스트리밍은 Phase 5(stream.py)에서 이 모듈에 추가된다.
+push listen용 JSONL 스트리밍은 Phase 5(stream.py)에서 추가된다.
 """
 
 from __future__ import annotations
@@ -25,12 +23,13 @@ from typing import Callable
 
 from quantbot import _yaml
 
-ORDER_FAMILY = ("order",)  # 주문 네임스페이스 — 재시도 금지·Phase 2 차단 대상
+# 읽기 전용 조회 네임스페이스 — 이것이 tossctl 어댑터의 전부다
+ALLOWED_NAMESPACES = ("quote", "market", "doctor", "auth")
 JSON_OUTPUT_FLAG = ("--output", "json")
 
 
 class TossctlError(Exception):
-    """어댑터 실행 계층의 공통 예외."""
+    """tossctl 실행 계층의 공통 예외."""
 
 
 class TossctlTimeout(TossctlError):
@@ -50,15 +49,15 @@ class TossctlBadJson(TossctlError):
     """stdout이 JSON이 아니다 — 스키마 이전 단계의 실패."""
 
 
-class OrderNamespaceBlocked(TossctlError):
-    """조회 표면에서 주문 네임스페이스 호출 시도 — 설계상 존재하지 않는 경로."""
+class CommandNotAllowed(TossctlError):
+    """조회 allowlist 밖의 명령 — tossctl 어댑터는 읽기 전용 표면만 노출한다."""
 
 
 @dataclass(frozen=True)
 class RunPolicy:
     binary: str
     timeout_s: float
-    max_retries: int          # 조회 계열의 추가 시도 횟수
+    max_retries: int
     backoff_base_s: float
     rate_min_interval_s: float
 
@@ -66,12 +65,12 @@ class RunPolicy:
     def from_config(cls, cfg: dict) -> "RunPolicy":
         binary = cfg.get("binary")
         if not isinstance(binary, str) or not binary:
-            raise TossctlError(f"adapter.binary: 문자열 필요: {binary!r}")
+            raise TossctlError(f"adapter.tossctl.binary: 문자열 필요: {binary!r}")
         vals = {}
         for key in ("timeout_s", "max_retries", "backoff_base_s", "rate_min_interval_s"):
             v = cfg.get(key)
             if isinstance(v, bool) or not isinstance(v, (int, float)) or v < 0:
-                raise TossctlError(f"adapter.{key}: 0 이상 숫자 필요: {v!r}")
+                raise TossctlError(f"adapter.tossctl.{key}: 0 이상 숫자 필요: {v!r}")
             vals[key] = v
         return cls(
             binary=binary,
@@ -85,36 +84,23 @@ class RunPolicy:
     def from_runtime_yaml(cls, path: str | Path) -> "RunPolicy":
         data = _yaml.load_file(str(path))
         adapter = data.get("adapter")
-        if not isinstance(adapter, dict):
-            raise TossctlError(f"{path}: adapter 섹션이 없다")
-        return cls.from_config(adapter)
-
-
-def is_order_family(args: list[str]) -> bool:
-    return bool(args) and args[0] in ORDER_FAMILY
-
-
-def attempts_for(args: list[str], policy: RunPolicy) -> int:
-    """주문 계열은 무조건 1회 — 재시도 없음이 코드 구조다 (§I3)."""
-    if is_order_family(args):
-        return 1
-    return 1 + policy.max_retries
+        if not isinstance(adapter, dict) or not isinstance(adapter.get("tossctl"), dict):
+            raise TossctlError(f"{path}: adapter.tossctl 섹션이 없다")
+        return cls.from_config(adapter["tossctl"])
 
 
 class TossctlRunner:
     """tossctl 호출의 유일한 관문. 인자 배열 → JSON 파싱까지만 책임진다
-    (스키마 검증은 contracts.call이 얹는다)."""
+    (스키마 검증은 tossctl/contracts.call이 얹는다)."""
 
     def __init__(
         self,
         policy: RunPolicy,
         *,
-        enable_order_namespace: bool = False,
         sleep: Callable[[float], None] = time.sleep,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._policy = policy
-        self._enable_order = enable_order_namespace
         self._sleep = sleep
         self._clock = clock
         self._last_call: float | None = None
@@ -133,13 +119,13 @@ class TossctlRunner:
             isinstance(a, str) for a in args
         ):
             raise TossctlError(f"인자는 비어 있지 않은 문자열 배열이어야 한다: {args!r}")
-        if is_order_family(args) and not self._enable_order:
-            raise OrderNamespaceBlocked(
-                "주문 네임스페이스는 조회 표면에 존재하지 않는다 — "
-                "Phase 4의 GATE 전용 표면(adapter.order)만 사용할 수 있다"
+        if args[0] not in ALLOWED_NAMESPACES:
+            raise CommandNotAllowed(
+                f"tossctl 어댑터는 읽기 전용 조회만 노출한다 — {args[0]!r}는 "
+                f"allowlist {ALLOWED_NAMESPACES}에 없다 (ARCH-02 v1.1)"
             )
         cmd = [self._policy.binary, *args, *JSON_OUTPUT_FLAG]
-        attempts = attempts_for(args, self._policy)
+        attempts = 1 + self._policy.max_retries
         last_exc: TossctlError | None = None
         for attempt in range(attempts):
             if attempt > 0:

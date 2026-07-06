@@ -133,14 +133,14 @@ def uptrend_store(tmp_path):
     )
 
 
-# ── Phase 2: 어댑터 테스트 인프라 (가짜 tossctl — 진짜 subprocess 경로) ──
+# ── 어댑터 테스트 인프라 1: 가짜 tossctl (진짜 subprocess 경로) ──────────
 
 FAKE_TOSSCTL = Path(__file__).resolve().parent / "fake_tossctl.py"
 TOSSCTL_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "tossctl"
 
 
 def make_run_policy(**overrides):
-    from quantbot.adapter.proc import RunPolicy
+    from quantbot.adapter.tossctl.proc import RunPolicy
 
     kw = dict(
         binary=str(FAKE_TOSSCTL),
@@ -155,10 +155,263 @@ def make_run_policy(**overrides):
 
 @pytest.fixture
 def tossctl_runner(monkeypatch):
-    from quantbot.adapter.proc import TossctlRunner
+    from quantbot.adapter.tossctl.proc import TossctlRunner
 
     monkeypatch.setenv("FAKE_TOSSCTL_FIXTURES", str(TOSSCTL_FIXTURES))
     monkeypatch.delenv("FAKE_TOSSCTL_FAIL_FILE", raising=False)
     monkeypatch.delenv("FAKE_TOSSCTL_SLEEP", raising=False)
     monkeypatch.delenv("FAKE_TOSSCTL_DUMP_ARGS", raising=False)
     return TossctlRunner(make_run_policy())
+
+
+# ── 어댑터 테스트 인프라 2: 공식 API 로컬 서버 (진짜 urllib·OAuth2 경로) ──
+
+import copy
+import http.server
+import json as _json
+import threading
+from urllib.parse import urlsplit
+
+OFFICIAL_FIXTURES: dict[str, object] = {
+    "/api/v1/prices": [
+        {"symbol": "AAPL", "timestamp": "2026-07-06T05:00:00+09:00",
+         "lastPrice": "213.55", "currency": "USD"},
+    ],
+    "/api/v1/orderbook": {
+        "timestamp": "2026-07-06T05:00:00+09:00", "currency": "KRW",
+        "asks": [{"price": "62000", "volume": "800"}],
+        "bids": [{"price": "61900", "volume": "1200"}],
+    },
+    "/api/v1/trades": [
+        {"price": "61950", "volume": "10", "timestamp": "2026-07-06T10:00:00+09:00",
+         "currency": "KRW"},
+    ],
+    "/api/v1/price-limits": {
+        "timestamp": "2026-07-06T09:00:00+09:00", "upperLimitPrice": "80600",
+        "lowerLimitPrice": "43400", "currency": "KRW",
+    },
+    "/api/v1/candles": {
+        "candles": [
+            {"timestamp": "2026-07-01T00:00:00+09:00", "openPrice": "209.00",
+             "highPrice": "211.00", "lowPrice": "208.50", "closePrice": "210.10",
+             "volume": "1000000", "currency": "USD"},
+            {"timestamp": "2026-07-02T00:00:00+09:00", "openPrice": "210.50",
+             "highPrice": "212.30", "lowPrice": "210.00", "closePrice": "211.90",
+             "volume": "1100000", "currency": "USD"},
+            {"timestamp": "2026-07-03T00:00:00+09:00", "openPrice": "212.00",
+             "highPrice": "214.00", "lowPrice": "211.80", "closePrice": "213.55",
+             "volume": "900000", "currency": "USD"},
+        ],
+        "nextBefore": None,
+    },
+    "/api/v1/stocks": [
+        {"symbol": "AAPL", "name": "애플", "englishName": "Apple Inc.",
+         "isinCode": "US0378331005", "market": "NASDAQ",
+         "securityType": "FOREIGN_STOCK", "isCommonShare": True, "status": "ACTIVE",
+         "currency": "USD", "listDate": "1980-12-12", "delistDate": None,
+         "sharesOutstanding": "15000000000", "leverageFactor": None,
+         "koreanMarketDetail": None},
+        {"symbol": "TQQQ", "name": "프로셰어즈 울트라프로 QQQ",
+         "englishName": "ProShares UltraPro QQQ", "isinCode": "US74347X8314",
+         "market": "NASDAQ", "securityType": "FOREIGN_ETF", "isCommonShare": True,
+         "status": "ACTIVE", "currency": "USD", "listDate": "2010-02-09",
+         "delistDate": None, "sharesOutstanding": "600000000",
+         "leverageFactor": "3.0", "koreanMarketDetail": None},
+    ],
+    "/api/v1/stocks/005930/warnings": [
+        {"warningType": "OVERHEATED", "exchange": "KRX",
+         "startDate": "2026-07-01", "endDate": None},
+    ],
+    "/api/v1/exchange-rate": {
+        "baseCurrency": "USD", "quoteCurrency": "KRW", "rate": "1352.30",
+        "midRate": "1351.80", "basisPoint": "50", "rateChangeType": "UP",
+        "validFrom": "2026-07-06T09:00:00+09:00", "validUntil": "2026-07-06T09:10:00+09:00",
+    },
+    "/api/v1/market-calendar/KR": {
+        "today": {"date": "2026-07-06", "integrated": {"open": "09:00", "close": "15:30"}},
+        "previousBusinessDay": {"date": "2026-07-03", "integrated": None},
+        "nextBusinessDay": {"date": "2026-07-07", "integrated": None},
+    },
+    "/api/v1/market-calendar/US": {
+        "today": {"date": "2026-07-06",
+                  "dayMarket": None,
+                  "preMarket": {"open": "17:00", "close": "22:30"},
+                  "regularMarket": {"open": "22:30", "close": "05:00"},
+                  "afterMarket": None},
+        "previousBusinessDay": {"date": "2026-07-03", "dayMarket": None,
+                                "preMarket": None, "regularMarket": None,
+                                "afterMarket": None},
+        "nextBusinessDay": {"date": "2026-07-07", "dayMarket": None, "preMarket": None,
+                            "regularMarket": None, "afterMarket": None},
+    },
+    "/api/v1/accounts": [
+        {"accountNo": "123-45-678900", "accountSeq": 1, "accountType": "BROKERAGE"},
+    ],
+    "/api/v1/holdings": {
+        "totalPurchaseAmount": {"krw": "4800000", "usd": "1500.00"},
+        "marketValue": {
+            "amount": {"krw": "5100000", "usd": "1600.00"},
+            "amountAfterCost": {"krw": "5095000", "usd": "1598.00"},
+        },
+        "profitLoss": {
+            "amount": {"krw": "300000", "usd": None},
+            "amountAfterCost": {"krw": "295000", "usd": None},
+            "rate": "0.0625", "rateAfterCost": "0.0614",
+        },
+        "dailyProfitLoss": {"amount": {"krw": "12000", "usd": None}, "rate": "0.0024"},
+        "items": [
+            {"symbol": "AAPL", "name": "애플", "marketCountry": "US",
+             "currency": "USD", "quantity": "1.5", "lastPrice": "213.55",
+             "averagePurchasePrice": "205.00",
+             "marketValue": {"purchaseAmount": "307.50", "amount": "320.32",
+                             "amountAfterCost": "320.00"},
+             "profitLoss": {"amount": "12.82", "amountAfterCost": "12.50",
+                            "rate": "0.0417", "rateAfterCost": "0.0406"},
+             "dailyProfitLoss": {"amount": "1.20", "rate": "0.0037"},
+             "cost": {"commission": "0.32", "tax": None}},
+        ],
+    },
+    "/api/v1/orders": {
+        "orders": [
+            {"orderId": "ord-1", "symbol": "AAPL", "side": "BUY",
+             "orderType": "MARKET", "timeInForce": "DAY", "status": "FILLED",
+             "price": None, "quantity": "1.5", "orderAmount": None,
+             "currency": "USD", "orderedAt": "2026-07-01T23:35:00+09:00",
+             "canceledAt": None,
+             "execution": {"filledQuantity": "1.5", "averageFilledPrice": "205.00",
+                           "filledAmount": "307.50", "commission": "0.32",
+                           "tax": None, "filledAt": "2026-07-01T23:35:02+09:00",
+                           "settlementDate": "2026-07-03"}},
+        ],
+        "nextCursor": None,
+        "hasNext": False,
+    },
+    "/api/v1/buying-power": {"currency": "KRW", "cashBuyingPower": "5000000"},
+    "/api/v1/sellable-quantity": {"sellableQuantity": "1.5"},
+    "/api/v1/commissions": [
+        {"marketCountry": "KR", "commissionRate": "0.00015",
+         "startDate": None, "endDate": None},
+        {"marketCountry": "US", "commissionRate": "0.001",
+         "startDate": None, "endDate": None},
+    ],
+}
+OFFICIAL_FIXTURES["/api/v1/orders/ord-1"] = copy.deepcopy(
+    OFFICIAL_FIXTURES["/api/v1/orders"]["orders"][0]
+)
+
+
+class OfficialApiServer:
+    """공식 Open API 페이크 — 진짜 HTTP로 응답해 urllib·OAuth2 경로 전체를 검증한다."""
+
+    def __init__(self):
+        self.fixtures = copy.deepcopy(OFFICIAL_FIXTURES)
+        self.raw_overrides: dict[str, bytes] = {}   # path → envelope 원문 그대로
+        self.fail_queue: list[tuple[int, dict, bytes]] = []
+        self.requests: list[tuple[str, str, dict]] = []
+        self.token_issues = 0
+        server = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):  # 테스트 출력 오염 방지
+                pass
+
+            def _send(self, status, body: bytes, headers=None):
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                for k, v in (headers or {}).items():
+                    self.send_header(k, v)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_POST(self):
+                path = urlsplit(self.path).path
+                server.requests.append(("POST", path, dict(self.headers)))
+                if path != "/oauth2/token":
+                    self._send(404, _json.dumps(
+                        {"error": {"code": "edge-blocked", "message": "no such path"}}
+                    ).encode())
+                    return
+                length = int(self.headers.get("Content-Length", "0"))
+                form = self.rfile.read(length).decode()
+                if "grant_type=client_credentials" not in form:
+                    self._send(400, b'{"error":{"code":"invalid-request","message":"grant"}}')
+                    return
+                server.token_issues += 1
+                self._send(200, _json.dumps({
+                    "access_token": f"tok-{server.token_issues}",
+                    "token_type": "Bearer",
+                    "expires_in": 3600,
+                }).encode())
+
+            def do_GET(self):
+                path = urlsplit(self.path).path
+                server.requests.append(("GET", path, dict(self.headers)))
+                if server.fail_queue:
+                    status, headers, body = server.fail_queue.pop(0)
+                    self._send(status, body, headers)
+                    return
+                auth = self.headers.get("Authorization", "")
+                if auth != f"Bearer tok-{server.token_issues}" or server.token_issues == 0:
+                    self._send(401, _json.dumps(
+                        {"error": {"code": "invalid-token", "message": "bad token"}}
+                    ).encode())
+                    return
+                if path in server.raw_overrides:
+                    self._send(200, server.raw_overrides[path])
+                    return
+                if path in server.fixtures:
+                    self._send(200, _json.dumps(
+                        {"result": server.fixtures[path]}, ensure_ascii=False
+                    ).encode())
+                    return
+                self._send(404, _json.dumps(
+                    {"error": {"code": "edge-blocked", "message": f"no fixture {path}"}}
+                ).encode())
+
+        self._httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.port = self._httpd.server_address[1]
+        self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
+        self._thread.start()
+
+    @property
+    def base_url(self) -> str:
+        return f"http://127.0.0.1:{self.port}"
+
+    def stop(self):
+        self._httpd.shutdown()
+        self._httpd.server_close()
+
+
+@pytest.fixture
+def official_server():
+    server = OfficialApiServer()
+    yield server
+    server.stop()
+
+
+def make_openapi_policy(base_url: str, **overrides):
+    from quantbot.adapter.official.http import OpenApiPolicy
+
+    groups = ("AUTH", "ACCOUNT", "ASSET", "STOCK", "MARKET_INFO", "MARKET_DATA",
+              "MARKET_DATA_CHART", "ORDER_HISTORY", "ORDER_INFO")
+    kw = dict(
+        base_url=base_url,
+        timeout_s=5.0,
+        max_retries=2,
+        backoff_base_s=0.0,
+        group_tps={g: 10000.0 for g in groups},  # 테스트에선 사실상 무제한
+    )
+    kw.update(overrides)
+    return OpenApiPolicy(**kw)
+
+
+@pytest.fixture
+def official_client(official_server):
+    from quantbot.adapter.official.http import Credentials, OpenApiClient
+
+    return OpenApiClient(
+        make_openapi_policy(official_server.base_url),
+        Credentials(client_id="cid-test", client_secret="sec-test"),
+        account_seq="1",
+    )
