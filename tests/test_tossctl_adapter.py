@@ -42,7 +42,7 @@ def test_injection_is_impossible_args_passed_literally(tossctl_runner, monkeypat
 
 def test_only_query_namespaces_are_expressible(tossctl_runner):
     """결정 1: 주문은 물론, allowlist 밖 어떤 네임스페이스도 실행 자체가 안 된다."""
-    assert ALLOWED_NAMESPACES == ("quote", "market", "doctor", "auth")
+    assert ALLOWED_NAMESPACES == ("quote", "market", "doctor", "auth", "push")
     for forbidden in (["order", "place", "AAPL"], ["orders", "list"],
                       ["account", "summary"], ["watchlist", "add", "X"]):
         with pytest.raises(CommandNotAllowed):

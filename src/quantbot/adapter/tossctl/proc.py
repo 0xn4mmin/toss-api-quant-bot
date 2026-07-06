@@ -23,8 +23,8 @@ from typing import Callable
 
 from quantbot import _yaml
 
-# 읽기 전용 조회 네임스페이스 — 이것이 tossctl 어댑터의 전부다
-ALLOWED_NAMESPACES = ("quote", "market", "doctor", "auth")
+# 읽기 전용 조회·수신 네임스페이스 — 이것이 tossctl 어댑터의 전부다
+ALLOWED_NAMESPACES = ("quote", "market", "doctor", "auth", "push")
 JSON_OUTPUT_FLAG = ("--output", "json")
 
 
@@ -155,3 +155,32 @@ class TossctlRunner:
                 ) from e
         assert last_exc is not None
         raise last_exc
+
+    def stream_json_lines(self, args: list[str]):
+        """장수 프로세스의 JSONL 라인 스트림 (push listen, §I3) — 파싱된 객체를
+        하나씩 낸다. 깨진 라인은 즉시 TossctlBadJson (재시도 없음 — 상향 신호)."""
+        if not isinstance(args, list) or not args or not all(
+            isinstance(a, str) for a in args
+        ):
+            raise TossctlError(f"인자는 비어 있지 않은 문자열 배열이어야 한다: {args!r}")
+        if args[0] not in ALLOWED_NAMESPACES:
+            raise CommandNotAllowed(
+                f"tossctl 어댑터는 읽기 전용 표면만 노출한다 — {args[0]!r}"
+            )
+        cmd = [self._policy.binary, *args, *JSON_OUTPUT_FLAG]
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+        )
+        try:
+            assert proc.stdout is not None
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    yield json.loads(line)
+                except json.JSONDecodeError as e:
+                    raise TossctlBadJson(f"push 스트림 라인이 JSON이 아니다: {e}") from e
+        finally:
+            proc.terminate()
+            proc.wait(timeout=self._policy.timeout_s)

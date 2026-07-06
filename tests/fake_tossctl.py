@@ -36,6 +36,15 @@ def main() -> None:
         print(json.dumps(argv))
         return
 
+    # push listen — JSONL 스트림 모드: 픽스처 파일을 한 줄씩 흘린다
+    if argv[:2] == ["push", "listen"]:
+        path = os.path.join(os.environ["FAKE_TOSSCTL_FIXTURES"], "push_listen.jsonl")
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                sys.stdout.write(line)
+                sys.stdout.flush()
+        return
+
     # --output json 꼬리 제거 후, 플래그 전까지 최대 3개 토큰 — 3토큰(종목별)
     # 픽스처가 있으면 우선, 없으면 2토큰(명령 공통) 픽스처로 폴백
     if argv[-2:] == ["--output", "json"]:

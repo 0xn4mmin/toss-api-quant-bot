@@ -29,9 +29,15 @@ adapter:
       MARKET_DATA_CHART: 5
       ORDER_HISTORY: 5
       ORDER_INFO: 6
-  tossctl:                     # 비공식 CLI — 읽기 전용 보조 (flows·지수·스크리너)
+
+  tossctl:                     # 비공식 CLI — 읽기 전용 보조 (flows·지수·스크리너·push)
     binary: "tossctl"
     timeout_s: 30
     max_retries: 2
     backoff_base_s: 0.5
     rate_min_interval_s: 0.35  # 호출 간 최소 간격 (RISK-01 호출량 예의)
+
+# 감시자 (GATE-05) — 이상 감지 임계
+watcher:
+  heartbeat_timeout_s: 90      # 스트림 침묵 허용 상한 → 초과 시 fail-safe hold
+  max_consecutive_errors: 5    # 연속 오류 임계 → 도달 시 fail-safe hold
