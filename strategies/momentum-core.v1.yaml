@@ -1,0 +1,51 @@
+# strategies/momentum-core.v1.yaml — v1 live 후보: US 코어 단독 (STRAT §S6)
+# [탐색] 파라미터의 최종값은 백테스트 산출물 — config/grids/momentum-core.yaml이
+# 사전등록 그리드다. 여기 적힌 값은 그리드 안의 초기 후보일 뿐이다.
+# 주의: YAML 서브셋 — 블록 스타일만 지원 (flow mapping 금지).
+meta:
+  id: momentum-core
+  version: 1
+  author: human
+universe:
+  us_core:
+    source: whitelist
+    max_symbols: 10
+    min_adv_usd: 1000000    # 유동성 하한 상수 — 탐색 아님 (§S6)
+signals:
+  - slot: trend_score
+    inputs:
+      - md.chart
+    params:
+      lookback: 26          # [탐색] lookback_wk
+      skip: 2               # [탐색] skip_wk
+      abs_filter: true      # [탐색]
+  - slot: regime_filter
+    inputs:
+      - mkt.index:SPX
+      - mkt.index:VIX
+    params:
+      ma_len: 150           # [탐색]
+      vix_threshold: 25     # [탐색] 절대값 계열
+      e_min: 0.2            # [탐색]
+      caution_exposure: 0.5 # 고정 — 탐색 금지 (§S4 OF-02)
+entry_exit:
+  entry:
+    rule_slot: rank_top_n
+    params:
+      n: 10                 # [탐색] — 주의: sleeve 1.0에서 n=8은 12.5%로 INV-01 위반
+                            #   (§S10의 n∈{8,10}은 65% sleeve 기준. LC-G1이 정적 검출)
+  exit:
+    rule_slot: rank_drop
+    params:
+      exit_buffer: 1.5      # [탐색]
+    stop_loss_pct: 0.10     # 고정 — 서킷브레이커(INV-07)가 독립 백업 (§S10)
+sizing:
+  scheme: equal_weight_capped
+  sleeves:
+    us_core: 1.0            # v2+: kr_satellite 추가 (paper-extended, §S3)
+  no_trade_band: 0.02       # 수수료 최소화 기준 선택 — 성과 그리드 제외 (OF-03)
+  order_unit: fractional    # v1.1 결정 2 — whole과의 비교는 별개 전략 id로만
+cadence:
+  rebalance: weekly
+  execution_window:
+    us: "23:00-00:30 KST"

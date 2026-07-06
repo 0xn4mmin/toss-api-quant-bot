@@ -55,6 +55,45 @@ e: 3
     assert _yaml.loads(doc) == {"a": {"b": {"c": 1}, "d": 2}, "e": 3}
 
 
+def test_list_of_mappings():
+    """전략 파일의 signals 형식 (ARCH §5) — 블록 리스트-오브-매핑."""
+    doc = """\
+signals:
+  - slot: trend_score
+    inputs:
+      - md.chart
+    params:
+      lookback_wk: 26
+      abs_filter: true
+  - slot: regime_filter
+    params:
+      ma_len: 150
+plain:
+  - 1
+  - 2
+"""
+    assert _yaml.loads(doc) == {
+        "signals": [
+            {"slot": "trend_score", "inputs": ["md.chart"],
+             "params": {"lookback_wk": 26, "abs_filter": True}},
+            {"slot": "regime_filter", "params": {"ma_len": 150}},
+        ],
+        "plain": [1, 2],
+    }
+
+
+def test_list_item_with_empty_key():
+    doc = """\
+items:
+  - name: a
+    detail:
+  - name: b
+"""
+    assert _yaml.loads(doc) == {
+        "items": [{"name": "a", "detail": None}, {"name": "b"}],
+    }
+
+
 @pytest.mark.parametrize(
     "doc",
     [
@@ -66,7 +105,8 @@ e: 3
         "---\na: 1",          # 다중 문서
         "\ta: 1",             # 탭 들여쓰기
         "a: 1\na: 2",         # 중복 키
-        "a:\n  - k: v",       # 리스트 안 매핑
+        "a:\n  - - 1",        # 중첩 리스트
+        "a:\n  -",            # 빈 리스트 항목
         'a: "unclosed',       # 닫히지 않은 따옴표
     ],
 )

@@ -66,6 +66,29 @@ def _parse_scalar(raw: str, lineno: int) -> object:
     return raw
 
 
+def _handle_mapping_line(
+    content: str, indent: int, container: dict, lineno: int
+) -> tuple[int, dict, str] | None:
+    """"key: value" 또는 "key:" 처리 — 후자는 pending_key를 반환한다."""
+    key, sep, value = content.partition(":")
+    if not sep:
+        raise YamlSubsetError(lineno, f"매핑도 리스트도 아닌 줄: {content!r}")
+    if value and not value.startswith(" "):
+        raise YamlSubsetError(lineno, "':' 뒤에는 공백이 필요하다")
+    key = key.strip()
+    if not key:
+        raise YamlSubsetError(lineno, "빈 키")
+    if key in container:
+        raise YamlSubsetError(lineno, f"중복 키: {key!r}")
+    if value.strip():
+        container[key] = _parse_scalar(value, lineno)
+        return None
+    return (indent, container, key)
+
+
+LIST_ITEM_CHILD_INDENT = 2  # "- key: ..." 항목의 하위 키 가상 들여쓰기 (표준 YAML)
+
+
 def loads(text: str) -> dict[str, object]:
     """YAML 서브셋 문자열을 dict로 파싱한다. 최상위는 매핑이어야 한다."""
     root: dict[str, object] = {}
@@ -106,27 +129,25 @@ def loads(text: str) -> dict[str, object]:
             if not isinstance(container, list):
                 raise YamlSubsetError(lineno, "리스트 항목이 매핑 위치에 있다")
             item = content[1:].strip()
-            if item.endswith(":") or ": " in item:
-                raise YamlSubsetError(lineno, "리스트 안의 매핑은 지원하지 않는다")
+            if not item:
+                raise YamlSubsetError(lineno, "빈 리스트 항목")
+            if item.startswith("- "):
+                raise YamlSubsetError(lineno, "중첩 리스트는 지원하지 않는다")
+            is_quoted = item[0] in ("'", '"')
+            if not is_quoted and (item.endswith(":") or ": " in item):
+                # 매핑 항목 ("- key: ..." / "- key:") — 하위 키는 indent+2 레벨
+                d: dict[str, object] = {}
+                container.append(d)
+                child_indent = indent + LIST_ITEM_CHILD_INDENT
+                stack.append((child_indent, d))
+                pending_key = _handle_mapping_line(item, child_indent, d, lineno)
+                continue
             container.append(_parse_scalar(item, lineno))
             continue
 
         if not isinstance(container, dict):
             raise YamlSubsetError(lineno, "매핑 키가 리스트 위치에 있다")
-        key, sep, value = content.partition(":")
-        if not sep:
-            raise YamlSubsetError(lineno, f"매핑도 리스트도 아닌 줄: {content!r}")
-        if value and not value.startswith(" "):
-            raise YamlSubsetError(lineno, "':' 뒤에는 공백이 필요하다")
-        key = key.strip()
-        if not key:
-            raise YamlSubsetError(lineno, "빈 키")
-        if key in container:
-            raise YamlSubsetError(lineno, f"중복 키: {key!r}")
-        if value.strip():
-            container[key] = _parse_scalar(value, lineno)
-        else:
-            pending_key = (indent, container, key)
+        pending_key = _handle_mapping_line(content, indent, container, lineno)
 
     if pending_key is not None:
         pending_key[1][pending_key[2]] = None
