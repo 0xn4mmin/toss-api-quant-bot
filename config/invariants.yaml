@@ -16,6 +16,11 @@ universe:
   whitelist_only: true        # INV-03 — 화이트리스트 유니버스만
   kr_path: "universe/kr.yaml"
   us_path: "universe/us.yaml"
+  # INV-11 (2026-07-06 확정) — 레버리지·인버스 ETF/ETN 금지.
+  # 주 방어: 공식 API 종목 마스터 leverageFactor 기계 검증(게이트, LC-G1/GATE-03).
+  #   ETF/ETN 계열은 1.0만 허용, null(데이터 누락)은 "판정 불가" = 자동 승인 제외.
+  #   비ETF 종목은 null이 정상. 보조: 화이트리스트 사람 큐레이션(1차 필터).
+  exclude_leveraged_etf: true
 
 backtest:
   max_mdd_pct: 15             # INV-04 — 백테스트 MDD 상한

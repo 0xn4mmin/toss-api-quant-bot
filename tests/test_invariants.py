@@ -17,6 +17,7 @@ universe:
   whitelist_only: true
   kr_path: "universe/kr.yaml"
   us_path: "universe/us.yaml"
+  exclude_leveraged_etf: true
 backtest:
   max_mdd_pct: 15
 rebalance:
@@ -89,6 +90,37 @@ def test_invalid_values_are_rejected(tmp_path, needle, replacement, match):
     p.write_text(text, encoding="utf-8")
     with pytest.raises(InvariantsError, match=match):
         load_invariants(p)
+
+
+def test_inv11_field_loads(valid_file):
+    inv = load_invariants(valid_file)
+    assert inv.universe.exclude_leveraged_etf is True  # INV-11
+
+
+def test_inv11_leverage_verdict():
+    """INV-11 판정 술어 — 하나의 규칙이 레버리지·인버스를 모두 잡고,
+    null은 유형에 따라 '정상'과 '판정 불가'로 갈린다 (2026-07-06 소유자 결정)."""
+    from quantbot.engine.invariants import (
+        VERDICT_ELIGIBLE,
+        VERDICT_INDETERMINATE,
+        VERDICT_REJECTED,
+        leverage_verdict,
+    )
+
+    # 일반 주식: null이 명세상 정상값
+    assert leverage_verdict("STOCK", None) == VERDICT_ELIGIBLE
+    assert leverage_verdict("FOREIGN_STOCK", None) == VERDICT_ELIGIBLE
+    # ETF/ETN 계열: 1.0만 통과
+    assert leverage_verdict("ETF", "1.0") == VERDICT_ELIGIBLE
+    assert leverage_verdict("FOREIGN_ETF", "3.0") == VERDICT_REJECTED   # TQQQ류
+    assert leverage_verdict("ETN", "2.0") == VERDICT_REJECTED
+    assert leverage_verdict("ETF", "-1.0") == VERDICT_REJECTED          # 인버스 포함
+    # ETF/ETN인데 null = 데이터 누락 — 안전이 아니라 판정 불가 (fail-closed)
+    assert leverage_verdict("FOREIGN_ETF", None) == VERDICT_INDETERMINATE
+    assert leverage_verdict("ETF", "N/A") == VERDICT_INDETERMINATE
+    # 비ETF인데 레버리지 값이 붙어 오면 방어적 거부
+    assert leverage_verdict("STOCK", "2.0") == VERDICT_REJECTED
+    assert leverage_verdict("REIT", "1.0") == VERDICT_ELIGIBLE
 
 
 def test_malformed_yaml_is_rejected(tmp_path):

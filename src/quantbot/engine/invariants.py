@@ -30,9 +30,10 @@ class PositionLimits:
 
 @dataclass(frozen=True)
 class UniversePolicy:
-    whitelist_only: bool   # INV-03
+    whitelist_only: bool          # INV-03
     kr_path: str
     us_path: str
+    exclude_leveraged_etf: bool   # INV-11 (ARCH v1.1)
 
 
 @dataclass(frozen=True)
@@ -118,6 +119,38 @@ def _strval(sec: dict, section: str, key: str) -> str:
     return val
 
 
+# ── INV-11 판정 술어 (ARCH v1.1 GATE-03) ─────────────────────────────────
+# 게이트(Phase 3 LC-G1 / Phase 4 GATE-03)가 유니버스 전 종목에 적용한다.
+# 입력은 공식 API 종목 마스터의 securityType·leverageFactor (문자열, 명세 그대로).
+
+ETP_SECURITY_TYPES = ("ETF", "FOREIGN_ETF", "ETN")
+
+VERDICT_ELIGIBLE = "eligible"
+VERDICT_REJECTED = "rejected"
+VERDICT_INDETERMINATE = "indeterminate"  # 자동 승인 제외 — null≠안전 (fail-closed)
+
+
+def leverage_verdict(security_type: str, leverage_factor: str | None) -> str:
+    """INV-11: 레버리지·인버스 ETF/ETN 배제.
+
+    - ETF/ETN 계열: leverageFactor == 1.0 만 eligible. null은 데이터 누락이므로
+      '판정 불가'(자동 승인 제외) — null을 안전으로 간주하면 누락 종목이 게이트를
+      통과한다. 1.0 외 값(2.0, 3.0, -1.0 인버스 포함)은 rejected.
+    - 그 외 유형(일반 주식 등): 명세상 null이 정상 → eligible. non-null인데
+      1.0이 아니면 방어적으로 rejected.
+    """
+    is_etp = security_type in ETP_SECURITY_TYPES
+    if leverage_factor is None:
+        return VERDICT_INDETERMINATE if is_etp else VERDICT_ELIGIBLE
+    try:
+        factor = float(leverage_factor)
+    except ValueError:
+        return VERDICT_INDETERMINATE  # 해석 불가 = 판정 불가 (fail-closed)
+    if factor == 1.0:
+        return VERDICT_ELIGIBLE
+    return VERDICT_REJECTED
+
+
 def load_invariants(path: str | Path | None = None) -> Invariants:
     """invariants 파일을 읽어 frozen dataclass로 반환한다.
 
@@ -154,6 +187,7 @@ def load_invariants(path: str | Path | None = None) -> Invariants:
             whitelist_only=_boolval(uni, "universe", "whitelist_only"),
             kr_path=_strval(uni, "universe", "kr_path"),
             us_path=_strval(uni, "universe", "us_path"),
+            exclude_leveraged_etf=_boolval(uni, "universe", "exclude_leveraged_etf"),
         ),
         backtest=BacktestLimits(
             max_mdd_pct=_num(bt, "backtest", "max_mdd_pct", lo=0.0, hi=100.0),
