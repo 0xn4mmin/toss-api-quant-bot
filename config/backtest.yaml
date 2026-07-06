@@ -6,6 +6,7 @@ methodology:
   test_days: 252                # BT-03 — OOS 1년
   step_days: 252                # BT-03 — 1년씩 rolling (anchored 아님)
   rebalance_every_n_days: 5     # 주 1회 (INV-05 정합)
+  trading_days_per_week: 5      # 주 단위 그리드(lookback_wk 등) → 거래일 환산
   trading_days_per_year: 252
   initial_capital_krw: 5000000  # §1 — 자본 ~500만원
   bootstrap:

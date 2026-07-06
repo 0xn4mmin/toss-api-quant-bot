@@ -125,6 +125,201 @@ def cmd_collect_flows(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_fetch_candles(args: argparse.Namespace) -> int:
+    """공식 API 일봉(adjusted=true)을 페이지네이션으로 받아 백테스트 CSV를 만든다."""
+    import csv as csv_mod
+
+    from quantbot.adapter.official import md
+
+    runtime = _load_runtime(args.runtime)
+    client = _official_client(runtime, args.runtime)
+    symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
+    page_size = int(runtime["adapter"]["official"].get("candles_page_size", 200))
+
+    rows: list[tuple[str, str, float, float]] = []
+    for symbol in symbols:
+        before: str | None = None
+        got = 0
+        while got < args.days:
+            page = md.candles(client, symbol, "1d",
+                              min(page_size, args.days - got), before=before)
+            if not page.candles:
+                break
+            for c in page.candles:
+                close = float(c.closePrice)
+                rows.append((c.timestamp[:10], symbol, close,
+                             float(c.volume) * close))
+            got += len(page.candles)
+            before = page.nextBefore
+            if before is None:
+                break
+        print(f"{symbol}: {got}봉")
+    rows.sort()
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with open(out, "w", newline="", encoding="utf-8") as f:
+        w = csv_mod.writer(f)
+        w.writerow(["date", "symbol", "close", "traded_value"])
+        w.writerows(rows)
+    print(f"→ {out} ({len(rows)}행) — 백테스트 데이터 (BT-D2: adjusted=true)")
+    return 0
+
+
+def _grid_signal_builder(strategy, tdpw: int):
+    """그리드 조합(주 단위 선언)을 슬롯 파라미터(거래일)로 번역하는 SignalFn."""
+    from quantbot.strategy.slots.pipeline import build_us_core_signal
+
+    cap_note = strategy.sizing.sleeves  # 캡은 엔진 invariants가 주입 (아래 cmd에서)
+
+    def make(params: dict, cap: float):
+        slot_params = {
+            "lookback": int(params["lookback_wk"]) * tdpw,
+            "skip": int(params["skip_wk"]) * tdpw,
+            "abs_filter": bool(params.get("abs_filter", False)),
+            "n": int(params["n"]),
+            "exit_buffer": float(params["exit_buffer"]),
+        }
+        return build_us_core_signal(slot_params, cap=cap)
+
+    def signal_fn_factory(cap: float):
+        def signal_fn(view, params):
+            return make(params, cap)(view, None)
+        return signal_fn
+
+    _ = cap_note
+    return signal_fn_factory
+
+
+def cmd_backtest(args: argparse.Namespace) -> int:
+    """전략 파일 + 사전등록 그리드 + CSV 데이터로 백테스트 게이트 판정 1회.
+
+    사전등록(BT-02)·OOS 1회(IMPL-05)·게이트 상수(§S9)가 전부 구조로 강제된다.
+    """
+    from quantbot import _yaml as yaml_mod
+    from quantbot.adapter.fills import CostModel
+    from quantbot.backtest import judge, prereg, walkforward
+    from quantbot.backtest.config import load_gates, load_grid, load_methodology
+    from quantbot.backtest.data import MarketDataStore
+    from quantbot.engine.invariants import load_invariants
+    from quantbot.engine.registry import Registry
+    from quantbot.strategy.loader import load_strategy
+
+    strategy = load_strategy(args.strategy)
+    grid = load_grid(args.grid)
+    meth, costs_cfg = load_methodology(args.config)
+    gates = load_gates(args.gates)
+    cost_model = CostModel.from_config(costs_cfg)
+    inv = load_invariants()
+    cap = inv.position.max_weight_pct / 100.0
+    tdpw = int(yaml_mod.load_file(args.config)["methodology"].get(
+        "trading_days_per_week", 5))
+    store = MarketDataStore.from_csv(args.data)
+    data_range = (args.start or store.date(0),
+                  args.end or store.date(len(store) - 1))
+    sid = f"{strategy.meta.id}.v{strategy.meta.version}"
+    order_unit = strategy.sizing.order_unit
+    signal_fn = _grid_signal_builder(strategy, tdpw)(cap)
+
+    with Registry(Path(args.var_dir) / "registry.db") as registry:
+        sha = prereg.seal(registry, sid, grid, data_range,
+                          walkforward.folds_spec(meth, order_unit))
+        print(f"사전등록 봉인 {sha[:12]}… (order_unit={order_unit})")
+        res = judge.evaluate_oos(
+            registry, store, sid, grid, data_range,
+            signal_fn, cost_model, meth, gates, order_unit,
+        )
+    print(f"판정: {'재현 검산' if res.reproduction else res.transition}"
+          f" · 시도 {res.n_configs_tried}조합 · artifact {res.artifact_sha[:12]}…")
+    for k, v in res.flags.items():
+        print(f"  {k}: {'PASS' if v else 'FAIL'}")
+    for k in ("oos_mdd", "oos_sharpe", "oos_cagr_after_costs_taxes",
+              "bootstrap_mdd_percentile", "annual_turnover", "cost_drag_annual"):
+        print(f"  {k} = {res.metrics[k]:.4f}")
+    print(f"  selected = {res.selected_params}")
+    return 0 if res.transition == "paper" or res.reproduction else 1
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    """페이퍼 운영 루프 — 텔레그램 폴링 + 하트비트 + 주간 리밸런싱. (미검증:
+    실 키·봇 토큰 배치 후 첫 감독 실행은 TODO.md 참조. live_trading은 Phase 7 전
+    까지 무조건 페이퍼로 강제된다.)"""
+    from quantbot.adapter.fills import CostModel
+    from quantbot.adapter.official import md
+    from quantbot.backtest.config import load_methodology
+    from quantbot.engine import caps as caps_mod
+    from quantbot.engine.gate import Gate, PaperPortfolio
+    from quantbot.engine.invariants import load_invariants
+    from quantbot.engine.registry import Registry
+    from quantbot.engine.watcher import Watcher, WatcherConfig
+    from quantbot.interface.router import ROUTING, Router, TokenStore
+    from quantbot.interface.telegram import TelegramClient, poll_once
+
+    runtime = _load_runtime(args.runtime)
+    tg_cfg = runtime.get("telegram", {})
+    owner = tg_cfg.get("owner_chat_id")
+    if not isinstance(owner, int):
+        raise SystemExit("runtime.yaml telegram.owner_chat_id 필요 (TODO.md 참조)")
+    client = _official_client(runtime, args.runtime)
+    _, costs_cfg = load_methodology("config/backtest.yaml")
+    inv = load_invariants()
+    registry = Registry(Path(args.var_dir) / "registry.db")
+    paper = PaperPortfolio(cash=float(args.paper_cash))
+    state = caps_mod.CapsState()
+
+    def quote(symbol: str) -> float:
+        return float(md.prices(client, [symbol])[0].lastPrice)
+
+    gate = Gate(registry, CostModel.from_config(costs_cfg),
+                live_trading=False,  # Phase 7 전까지 무조건 페이퍼 (IMPL-07)
+                paper=paper, quotes=quote,
+                receipt_ttl_s=float(tg_cfg.get("confirm_ttl_s", 300)))
+    watcher = Watcher(
+        registry=registry, caps_state=state,
+        config=WatcherConfig.from_runtime_yaml(args.runtime),
+        positions=lambda: {},
+    )
+    tg = TelegramClient.from_token_file(
+        tg_cfg["token_path"], timeout_s=10.0,
+        poll_timeout_s=float(tg_cfg.get("poll_timeout_s", 25)),
+    )
+    router = Router(
+        owner_chat_id=owner,
+        tier1={
+            "/status": lambda a: f"hold={state.hold} cb={state.cb_tripped} "
+                                 f"주문 {state.daily_order_count}회",
+            "/positions": lambda a: str(dict(paper.qty)) or "(없음)",
+            "/pnl": lambda a: f"현금 {paper.cash:,.0f}",
+            "/report": lambda a: "아침 보고서는 리밸런싱 사이클이 발신",
+            "/strategy": lambda a: "registry 조회는 /status 참조",
+            "/switch": lambda a: "자동 승인 파이프라인 미배선 — TODO.md",
+            "/pause": lambda a: (setattr(state, "hold", True), "일시 중단")[-1],
+        },
+        tier2_preview={
+            "/resume": lambda a: f"hold 해제 preview — 현재 hold={state.hold}",
+            "/order": lambda a: "수동 주문 preview 미배선 — TODO.md",
+            "/cb-release": lambda a: f"CB={state.cb_tripped}",
+            "/promote": lambda a: "⚠ 미검증 강제 승격 preview — TODO.md",
+        },
+        tier2_execute={
+            "/resume": lambda a: (watcher.release_hold(
+                confirmed_by_tier2=True, detail=a or "/resume"), "재개 완료")[-1],
+            "/order": lambda a: "미배선",
+            "/cb-release": lambda a: (setattr(state, "cb_tripped", False), "CB 해제")[-1],
+            "/promote": lambda a: "미배선",
+        },
+        tokens=TokenStore(ttl_s=float(tg_cfg.get("confirm_ttl_s", 300))),
+    )
+    print(f"페이퍼 운영 시작 — 명령 {sorted(ROUTING)} (중단: Ctrl-C)")
+    offset = None
+    try:
+        while True:
+            offset = poll_once(tg, router.handle, offset)
+            watcher.check_heartbeat()
+    except KeyboardInterrupt:
+        registry.close()
+        return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     parser = argparse.ArgumentParser(prog="quantbot")
@@ -144,6 +339,28 @@ def main(argv: list[str] | None = None) -> int:
     p_flows.add_argument("--screener", default="", help="tossctl 스크리너 프리셋")
     p_flows.add_argument("--var-dir", default="var", help="registry.db/flows.db 위치")
     p_flows.set_defaults(fn=cmd_collect_flows)
+
+    p_fetch = sub.add_parser("fetch-candles", help="일봉 CSV 적재 (백테스트 데이터)")
+    p_fetch.add_argument("--symbols", required=True, help="종목 CSV")
+    p_fetch.add_argument("--days", type=int, default=1800, help="종목당 일봉 수 (5년+)")
+    p_fetch.add_argument("--out", default="var/data/candles.csv")
+    p_fetch.set_defaults(fn=cmd_fetch_candles)
+
+    p_bt = sub.add_parser("backtest", help="사전등록·게이트 판정 백테스트 1회")
+    p_bt.add_argument("--strategy", default="strategies/momentum-core.v1.yaml")
+    p_bt.add_argument("--grid", default="config/grids/momentum-core.yaml")
+    p_bt.add_argument("--config", default="config/backtest.yaml")
+    p_bt.add_argument("--gates", default="config/backtest_gates.yaml")
+    p_bt.add_argument("--data", required=True, help="fetch-candles가 만든 CSV")
+    p_bt.add_argument("--start", default="", help="데이터 범위 시작일 (기본: 전체)")
+    p_bt.add_argument("--end", default="", help="데이터 범위 종료일")
+    p_bt.add_argument("--var-dir", default="var")
+    p_bt.set_defaults(fn=cmd_backtest)
+
+    p_run = sub.add_parser("run", help="페이퍼 운영 루프 (텔레그램 필요)")
+    p_run.add_argument("--var-dir", default="var")
+    p_run.add_argument("--paper-cash", default="5000000")
+    p_run.set_defaults(fn=cmd_run)
 
     args = parser.parse_args(argv)
     return args.fn(args)

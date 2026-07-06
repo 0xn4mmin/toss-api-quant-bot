@@ -99,6 +99,90 @@ def test_collect_flows_end_to_end(tmp_path, monkeypatch, capsys):
     assert "신규 0행" in capsys.readouterr().out
 
 
+def test_backtest_command_end_to_end(tmp_path, capsys, monkeypatch):
+    """cli backtest — 전략 파일·그리드·CSV로 봉인→판정까지 한 번에 (사용자 절차 그대로)."""
+    import numpy as np
+    from conftest import gentle_uptrend, trading_dates, write_csv
+
+    n = 480  # train 60 + test 30 폴드가 나오도록 소형 방법론을 씀
+    dates = trading_dates("2018-01-02", n)
+    closes = gentle_uptrend(n, seed=5, symbols=("AAA", "BBB", "CCC"))
+    csv_path = write_csv(tmp_path / "d.csv", dates, closes)
+
+    small_cfg = tmp_path / "backtest.yaml"
+    small_cfg.write_text("""\
+version: 1
+methodology:
+  train_days: 120
+  test_days: 60
+  step_days: 60
+  rebalance_every_n_days: 5
+  trading_days_per_week: 5
+  trading_days_per_year: 252
+  initial_capital_krw: 5000000
+  bootstrap:
+    n_samples: 200
+    block_len: 5
+    seed: 20260706
+costs:
+  commission_rate: 0.0001
+  min_commission_krw: 1
+  slippage_rate: 0.0005
+  sell_tax_rate: 0
+  annual_gain_tax_rate: 0
+  annual_deduction_krw: 0
+""", encoding="utf-8")
+    small_gates = tmp_path / "gates.yaml"
+    small_gates.write_text("""\
+version: 1
+g1_max_oos_mdd: 0.15
+g2_mdd_percentile: 95
+g2_p95_mdd_max: 0.20
+g2_stress_mdd_max: 0.20
+g2_stress_windows:
+  - "2018-03-01/2018-03-31"
+g3_min_cagr: 0.0
+g3_min_sharpe: 0.5
+g4_plateau_min_ratio: 0.7
+g5_oos_is_min_ratio: 0.5
+""", encoding="utf-8")
+    small_grid = tmp_path / "grid.yaml"
+    small_grid.write_text("""\
+lookback_wk:
+  - 2
+  - 3
+skip_wk:
+  - 1
+abs_filter:
+  - true
+n:
+  - 2
+exit_buffer:
+  - 1.5
+""", encoding="utf-8")
+
+    rc = cli.main([
+        "backtest", "--strategy", "strategies/momentum-core.v1.yaml",
+        "--grid", str(small_grid), "--config", str(small_cfg),
+        "--gates", str(small_gates), "--data", str(csv_path),
+        "--var-dir", str(tmp_path / "var"),
+    ])
+    out = capsys.readouterr().out
+    assert "사전등록 봉인" in out and "order_unit=fractional" in out
+    assert "BT-G1:" in out and "selected =" in out
+    assert rc in (0, 1)  # 판정 완주 (paper/rejected 둘 다 정상 종료)
+
+    # 그리드 1칸 수정 후 재실행 → 재봉인 거부 (BT-02가 CLI 경로에서도 강제)
+    small_grid.write_text(small_grid.read_text().replace("- 3", "- 4"), encoding="utf-8")
+    with pytest.raises(Exception, match="BT-02"):
+        cli.main([
+            "backtest", "--strategy", "strategies/momentum-core.v1.yaml",
+            "--grid", str(small_grid), "--config", str(small_cfg),
+            "--gates", str(small_gates), "--data", str(csv_path),
+            "--var-dir", str(tmp_path / "var"),
+        ])
+
+
 def test_collect_flows_failure_exits_nonzero(tmp_path, monkeypatch, capsys):
     """적재 실패 → exit 1 — cron 메일이 임시 경고 채널이 되는 지점."""
     from test_flows_snapshot import DAYS5, write_flows_fixture
