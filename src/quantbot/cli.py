@@ -165,6 +165,60 @@ def cmd_fetch_candles(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_import_vix(args: argparse.Namespace) -> int:
+    """CBOE VIX 이력 CSV를 candles CSV에 병합한다 (STRAT v1.3 — VIX 이력은
+    공식 API에 없음). 전 종목 날짜 격자를 교집합으로 정렬해 스토어 정합을 맞춘다."""
+    import csv as csv_mod
+    from datetime import datetime
+
+    def parse_date(raw: str) -> str:
+        raw = raw.strip()
+        for fmt in ("%m/%d/%Y", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(raw, fmt).date().isoformat()
+            except ValueError:
+                continue
+        raise SystemExit(f"VIX CSV 날짜 형식을 모른다: {raw!r}")
+
+    # 1) 기존 candles CSV
+    rows_by_symbol: dict[str, dict[str, tuple[float, float]]] = {}
+    with open(args.data, newline="", encoding="utf-8") as f:
+        for r in csv_mod.DictReader(f):
+            rows_by_symbol.setdefault(r["symbol"], {})[r["date"]] = (
+                float(r["close"]), float(r.get("traded_value") or 0.0),
+            )
+    # 2) CBOE CSV (DATE,OPEN,HIGH,LOW,CLOSE)
+    vix: dict[str, tuple[float, float]] = {}
+    with open(args.cboe_csv, newline="", encoding="utf-8") as f:
+        reader = csv_mod.DictReader(f)
+        cols = {c.upper(): c for c in (reader.fieldnames or [])}
+        if "DATE" not in cols or "CLOSE" not in cols:
+            raise SystemExit(f"CBOE CSV 헤더에 DATE/CLOSE 필요: {reader.fieldnames}")
+        for r in reader:
+            vix[parse_date(r[cols["DATE"]])] = (float(r[cols["CLOSE"]]), 0.0)
+    rows_by_symbol[args.vix_symbol] = vix
+
+    # 3) 날짜 교집합 정렬 (스토어는 완전 격자를 요구 — 결측은 자르고 보고한다)
+    common = set.intersection(*(set(d) for d in rows_by_symbol.values()))
+    if not common:
+        raise SystemExit("교집합 날짜가 없다 — 데이터 기간을 확인해라")
+    dates = sorted(common)
+    with open(args.out, "w", newline="", encoding="utf-8") as f:
+        w = csv_mod.writer(f)
+        w.writerow(["date", "symbol", "close", "traded_value"])
+        for symbol in sorted(rows_by_symbol):
+            for d in dates:
+                close, tv = rows_by_symbol[symbol][d]
+                w.writerow([d, symbol, f"{close:.6f}", f"{tv:.2f}"])
+    for symbol in sorted(rows_by_symbol):
+        dropped = len(rows_by_symbol[symbol]) - len(dates)
+        if dropped:
+            print(f"  {symbol}: 교집합 밖 {dropped}일 제외")
+    print(f"→ {args.out}: {len(rows_by_symbol)}종목 × {len(dates)}일 "
+          f"({dates[0]}~{dates[-1]})")
+    return 0
+
+
 def _grid_signal_builder(
     strategy, tdpw: int,
     index_symbol: str | None = None,
@@ -386,6 +440,13 @@ def main(argv: list[str] | None = None) -> int:
     p_fetch.add_argument("--days", type=int, default=1800, help="종목당 일봉 수 (5년+)")
     p_fetch.add_argument("--out", default="var/data/candles.csv")
     p_fetch.set_defaults(fn=cmd_fetch_candles)
+
+    p_vix = sub.add_parser("import-vix", help="CBOE VIX CSV를 candles CSV에 병합")
+    p_vix.add_argument("--data", required=True, help="fetch-candles가 만든 CSV")
+    p_vix.add_argument("--cboe-csv", required=True, help="CBOE VIX_History.csv")
+    p_vix.add_argument("--vix-symbol", default="VIX")
+    p_vix.add_argument("--out", required=True, help="병합 결과 CSV")
+    p_vix.set_defaults(fn=cmd_import_vix)
 
     p_bt = sub.add_parser("backtest", help="사전등록·게이트 판정 백테스트 1회")
     p_bt.add_argument("--strategy", default="strategies/momentum-core.v1.yaml")

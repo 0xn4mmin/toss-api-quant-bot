@@ -105,3 +105,36 @@ def test_backtest_cli_refuses_silent_regime_drop(tmp_path):
             "--data", str(tmp_path / "none.csv"),  # 데이터 검사 전에 거부돼야 함
             "--var-dir", str(tmp_path / "var"),
         ])
+
+def test_import_vix_merges_and_aligns_grid(tmp_path, capsys):
+    """STRAT v1.3: CBOE VIX 병합 — 날짜 격자 교집합 정렬 후 스토어 로드 가능."""
+    import csv
+
+    from quantbot import cli
+    from quantbot.backtest.data import MarketDataStore
+
+    candles = tmp_path / "candles.csv"
+    with open(candles, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["date", "symbol", "close", "traded_value"])
+        for d, c in [("2026-07-01", 100.0), ("2026-07-02", 101.0), ("2026-07-03", 102.0)]:
+            w.writerow([d, "SPY", c, 1000])
+            w.writerow([d, "AAPL", c * 2, 2000])
+    cboe = tmp_path / "VIX_History.csv"
+    cboe.write_text(
+        "DATE,OPEN,HIGH,LOW,CLOSE\n"
+        "06/30/2026,15,16,14,15.5\n"      # 교집합 밖 — 제외돼야 함
+        "07/01/2026,15,16,14,15.0\n"
+        "07/02/2026,16,17,15,16.2\n"
+        "07/03/2026,17,18,16,17.1\n",
+        encoding="utf-8",
+    )
+    out = tmp_path / "merged.csv"
+    rc = cli.main(["import-vix", "--data", str(candles), "--cboe-csv", str(cboe),
+                   "--out", str(out)])
+    assert rc == 0
+    printed = capsys.readouterr().out
+    assert "3종목 × 3일" in printed and "VIX: 교집합 밖 1일 제외" in printed
+    store = MarketDataStore.from_csv(out)      # 완전 격자 정합 통과
+    assert store.symbols == ("AAPL", "SPY", "VIX")
+    assert store.close_at("VIX", 1) == pytest.approx(16.2)

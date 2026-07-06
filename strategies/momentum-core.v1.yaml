@@ -20,9 +20,9 @@ signals:
       skip: 2               # [탐색] skip_wk
       abs_filter: true      # [탐색]
   - slot: regime_filter
-    inputs:
-      - mkt.index:SPX
-      - mkt.index:VIX
+    inputs:                     # STRAT v1.3 — US 추세=SPY 프록시(공식 candles),
+      - candles:SPY             #   VIX 이력=CBOE CSV 병합(quantbot import-vix)
+      - csv:VIX
     params:
       ma_len: 150           # [탐색]
       vix_threshold: 25     # [탐색] 절대값 계열
