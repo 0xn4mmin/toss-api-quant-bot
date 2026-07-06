@@ -1,0 +1,9 @@
+# quantbot 운영 타이머 (IMPL-07 Phase 2.5) — 수동 등록 필요: crontab -e 로 병합
+#
+# KR flows 일일 적재 — 매 거래일 KR 장 마감 후 (16:10 KST, 월–금).
+# 실패 시 exit 1 → cron 메일이 임시 경고 채널 (텔레그램은 Phase 6).
+# 휴장일은 tossctl 응답이 신규 행 0으로 흡수된다 (중복 불가 스키마).
+#
+# 전제: tossctl 설치·인증 완료, uv 설치, 저장소 경로 확인.
+CRON_TZ=Asia/Seoul
+10 16 * * 1-5  cd /path/to/toss-api-quant-bot && uv run quantbot collect-flows --screener kr_flows >> var/logs/collect-flows.log 2>&1

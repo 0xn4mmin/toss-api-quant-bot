@@ -36,7 +36,8 @@ def main() -> None:
         print(json.dumps(argv))
         return
 
-    # --output json 꼬리 제거 후, 플래그 전까지 최대 2개 토큰이 명령 이름
+    # --output json 꼬리 제거 후, 플래그 전까지 최대 3개 토큰 — 3토큰(종목별)
+    # 픽스처가 있으면 우선, 없으면 2토큰(명령 공통) 픽스처로 폴백
     if argv[-2:] == ["--output", "json"]:
         argv = argv[:-2]
     tokens: list[str] = []
@@ -44,12 +45,17 @@ def main() -> None:
         if a.startswith("-"):
             break
         tokens.append(a)
-        if len(tokens) == 2:
+        if len(tokens) == 3:
             break
-    name = "_".join(tokens)
-    path = os.path.join(os.environ["FAKE_TOSSCTL_FIXTURES"], name + ".json")
-    if not os.path.exists(path):
-        print(f"unknown command fixture: {name}", file=sys.stderr)
+    fdir = os.environ["FAKE_TOSSCTL_FIXTURES"]
+    path = None
+    for depth in (3, 2, 1):
+        candidate = os.path.join(fdir, "_".join(tokens[:depth]) + ".json")
+        if os.path.exists(candidate):
+            path = candidate
+            break
+    if path is None:
+        print(f"unknown command fixture: {'_'.join(tokens)}", file=sys.stderr)
         sys.exit(2)
     with open(path, encoding="utf-8") as f:
         sys.stdout.write(f.read())
