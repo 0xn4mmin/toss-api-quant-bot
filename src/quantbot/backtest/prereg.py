@@ -10,25 +10,17 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
-
+from quantbot._canon import canonical_json, sha256_hex
 from quantbot.engine.registry import Registry
+
+__all__ = ["ARTIFACT_KIND", "PreregError", "canonical_json", "sha256_hex",
+           "seal", "require_seal"]
 
 ARTIFACT_KIND = "prereg"
 
 
 class PreregError(ValueError):
     """봉인 부재·해시 불일치·재봉인 시도."""
-
-
-def canonical_json(obj: object) -> str:
-    """정렬 키·고정 구분자 — 동일 내용은 항상 동일 바이트 (재현성의 기반)."""
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-
-
-def sha256_hex(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _payload(grid: dict, data_range: tuple[str, str], folds_spec: dict) -> dict:

@@ -34,8 +34,8 @@ LAYER_RULES: dict[str, tuple[str, ...]] = {
     "quantbot.collect": ("quantbot.adapter", "quantbot.strategy.slots", "quantbot.engine.registry"),
 }
 
-# 순수 리프 유틸 — 어떤 계층도 아니며 누구나 import 가능 (stdlib 대용 YAML 파서).
-ALWAYS_ALLOWED: tuple[str, ...] = ("quantbot._yaml",)
+# 순수 리프 유틸 — 어떤 계층도 아니며 누구나 import 가능 (stdlib 전용, 계층 없음).
+ALWAYS_ALLOWED: tuple[str, ...] = ("quantbot._yaml", "quantbot._canon")
 
 # 조립 루트 — 전 계층을 이어 붙이는 유일한 최상위 모듈. 규칙 2·3·4·5는 여전히 적용.
 COMPOSITION_ROOTS: frozenset[str] = frozenset({"quantbot.cli"})
@@ -48,9 +48,8 @@ EXCLUSIVE_IMPORTERS: dict[str, frozenset[str]] = {
     "urllib.request": frozenset(
         {"quantbot.adapter.official.http", "quantbot.interface.telegram"}
     ),
-    # 조회 Phase: 주문 표면은 어디서도 import 불가.
-    # Phase 4에서 frozenset({"quantbot.engine.gate"}) 단독 허용으로 완화한다.
-    "quantbot.adapter.official.order": frozenset(),
+    # Phase 4: 주문 표면은 engine.gate만 import할 수 있다 — 게이트 우회 불가.
+    "quantbot.adapter.official.order": frozenset({"quantbot.engine.gate"}),
     "quantbot.strategy.translator": frozenset(),  # ISO-02: 별도 프로세스로만
 }
 

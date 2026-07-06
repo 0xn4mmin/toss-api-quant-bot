@@ -53,6 +53,9 @@ class SimResult:
         return eq[1:] / eq[:-1] - 1.0
 
 
+ORDER_UNITS = ("fractional", "whole")
+
+
 def simulate(
     store: MarketDataStore,
     start_idx: int,
@@ -61,14 +64,24 @@ def simulate(
     params: dict,
     cost_model: CostModel,
     m: Methodology,
+    order_unit: str = "fractional",
 ) -> SimResult:
     """[start_idx, end_idx] 구간을 재생한다 (양끝 포함).
 
     리밸런싱: 구간 시작일부터 m.rebalance_every_n_days 마다 시그널 계산(t),
     집행은 t+1 종가. 레버리지 0: 매수는 가용 현금 한도로 축소된다.
+
+    order_unit (ARCH v1.1 결정 2): 전략 선언 단위 그대로 평가한다 —
+    whole = 정수 수량 집행(절사에 의한 비중 왜곡·현금 잔류를 그대로 반영),
+    fractional = 금액 기반 배분(수량 소수점 허용).
     """
+    if order_unit not in ORDER_UNITS:
+        raise SimError(f"order_unit ∈ {ORDER_UNITS}: {order_unit!r}")
     if not (0 <= start_idx <= end_idx < len(store)):
         raise SimError(f"구간 오류: [{start_idx}, {end_idx}] / len={len(store)}")
+
+    def snap(q: float) -> float:
+        return float(int(q)) if order_unit == "whole" else q
 
     cash = m.initial_capital_krw
     qty: dict[str, float] = {}
@@ -89,7 +102,7 @@ def simulate(
                 target_w = pending.get(s, 0.0)
                 cur_q = qty.get(s, 0.0)
                 px = store.close_at(s, i)
-                target_q = (target_w * eq_now) / cost_model.buy_price(px)
+                target_q = snap((target_w * eq_now) / cost_model.buy_price(px))
                 if cur_q - target_q > 0:
                     sell_q = cur_q - target_q
                     exec_px = cost_model.sell_price(px)
@@ -115,15 +128,15 @@ def simulate(
                 cur_q = qty.get(s, 0.0)
                 px = store.close_at(s, i)
                 exec_px = cost_model.buy_price(px)
-                target_q = (target_w * eq_now) / exec_px
+                target_q = snap((target_w * eq_now) / exec_px)
                 buy_q = target_q - cur_q
                 if buy_q <= 0:
                     continue
                 notional = buy_q * exec_px
                 fee = cost_model.commission(notional)
                 if notional + fee > cash:  # 레버리지 0 — 현금 한도로 축소
-                    notional = max(cash - fee, 0.0)
-                    buy_q = notional / exec_px
+                    buy_q = snap(max(cash - fee, 0.0) / exec_px)
+                    notional = buy_q * exec_px
                 if buy_q <= 0 or notional <= 0:
                     continue
                 cash -= notional + fee

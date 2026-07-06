@@ -33,7 +33,7 @@ def _valid_dict() -> dict:
         "signals": [{"slot": "trend_score", "inputs": ["md.chart"],
                      "params": {"lookback": 26, "skip": 2}}],
         "entry_exit": {
-            "entry": {"rule_slot": "rank_top_n", "params": {"n": 8}},
+            "entry": {"rule_slot": "rank_top_n", "params": {"n": 10}},
             "exit": {"rule_slot": "rank_drop", "params": {"exit_buffer": 1.5},
                      "stop_loss_pct": 0.10},
         },

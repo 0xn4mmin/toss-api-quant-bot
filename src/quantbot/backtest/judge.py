@@ -123,9 +123,11 @@ def evaluate_oos(
     cost_model: CostModel,
     m: Methodology,
     gates: Gates,
+    order_unit: str = "fractional",
 ) -> JudgeResult:
     prereg_sha = prereg.require_seal(
-        registry, strategy_id, grid, data_range, walkforward.folds_spec(m)
+        registry, strategy_id, grid, data_range,
+        walkforward.folds_spec(m, order_unit),
     )
     run_sha = _run_sha(prereg_sha, gates, m, cost_model)
 
@@ -151,7 +153,8 @@ def evaluate_oos(
         )
 
     wf = walkforward.run_walkforward(
-        registry, store, strategy_id, grid, data_range, signal_fn, cost_model, m
+        registry, store, strategy_id, grid, data_range, signal_fn, cost_model, m,
+        order_unit,
     )
 
     equity = equity_from_returns(wf.oos_returns, m.initial_capital_krw)

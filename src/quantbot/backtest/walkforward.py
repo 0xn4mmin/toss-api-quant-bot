@@ -58,13 +58,18 @@ def make_folds(n_dates: int, m: Methodology) -> list[Fold]:
     return folds
 
 
-def folds_spec(m: Methodology) -> dict:
-    """사전등록에 봉인되는 폴드 구성 (BT-02)."""
+def folds_spec(m: Methodology, order_unit: str = "fractional") -> dict:
+    """사전등록에 봉인되는 폴드·집행 구성 (BT-02).
+
+    order_unit이 봉인에 들어가므로 같은 id로 단위만 바꾸면 해시가 어긋난다 —
+    단위 비교는 별개 전략 id의 별개 사전등록으로만 (STRAT v1.2 §S10).
+    """
     return {
         "train_days": m.train_days,
         "test_days": m.test_days,
         "step_days": m.step_days,
         "rebalance_every_n_days": m.rebalance_every_n_days,
+        "order_unit": order_unit,
     }
 
 
@@ -129,9 +134,10 @@ def run_walkforward(
     signal_fn: SignalFn,
     cost_model: CostModel,
     m: Methodology,
+    order_unit: str = "fractional",
 ) -> WalkForwardResult:
     """사전등록 봉인 검증 → IS 탐색(전 시도 기록) → 폴드별 OOS 1회 → 평탄 지대 선택."""
-    prereg.require_seal(registry, strategy_id, grid, data_range, folds_spec(m))
+    prereg.require_seal(registry, strategy_id, grid, data_range, folds_spec(m, order_unit))
 
     lo = store.index_of(data_range[0])
     hi = store.index_of(data_range[1])
@@ -152,7 +158,7 @@ def run_walkforward(
         for params in configs:  # IS에서만 탐색 (BT-03)
             r = simulate(
                 store, fold.train_start, fold.train_end - 1,
-                signal_fn, params, cost_model, m,
+                signal_fn, params, cost_model, m, order_unit,
             )
             score = sharpe(r.returns(), m.trading_days_per_year)
             registry.append_event(
@@ -171,7 +177,7 @@ def run_walkforward(
     # 폴드별 OOS — best 파라미터로 1회 평가 (BT-03)
     oos_sims = [
         simulate(store, f.test_start, f.test_end - 1,
-                 signal_fn, per_fold_best[k], cost_model, m)
+                 signal_fn, per_fold_best[k], cost_model, m, order_unit)
         for k, f in enumerate(folds)
     ]
     oos_returns = np.concatenate([r.returns() for r in oos_sims])
