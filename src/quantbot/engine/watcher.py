@@ -59,6 +59,22 @@ class WatcherConfig:
         return cls.from_config(w)
 
 
+def restore_hold_state(registry: Registry, caps_state: CapsState) -> bool:
+    """재시작 시 hold 상태를 registry에서 복원한다 (RISK-06: stateless 재시작).
+
+    마지막 hold 이벤트 뒤에 해제 기록이 없으면 hold로 기동한다 — 프로세스가
+    죽었다 살아나도 동결이 조용히 풀리지 않는다.
+    """
+    holds = registry.events(EVENT_HOLD)
+    if not holds:
+        return False
+    releases = registry.events(EVENT_HOLD_RELEASED)
+    if not releases or releases[-1]["id"] < holds[-1]["id"]:
+        caps_state.hold = True
+        return True
+    return False
+
+
 @dataclass(frozen=True)
 class StopLossBreach:
     """손절 조건 충족 통지 — 주문이 아니다. 주문 의도는 엔진이 caps/gate로 만든다."""

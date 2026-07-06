@@ -164,7 +164,7 @@ exit_buffer:
     rc = cli.main([
         "backtest", "--strategy", "strategies/momentum-core.v1.yaml",
         "--grid", str(small_grid), "--config", str(small_cfg),
-        "--gates", str(small_gates), "--data", str(csv_path),
+        "--gates", str(small_gates), "--data", str(csv_path), "--allow-no-regime",
         "--var-dir", str(tmp_path / "var"),
     ])
     out = capsys.readouterr().out
@@ -178,7 +178,7 @@ exit_buffer:
         cli.main([
             "backtest", "--strategy", "strategies/momentum-core.v1.yaml",
             "--grid", str(small_grid), "--config", str(small_cfg),
-            "--gates", str(small_gates), "--data", str(csv_path),
+            "--gates", str(small_gates), "--data", str(csv_path), "--allow-no-regime",
             "--var-dir", str(tmp_path / "var"),
         ])
 

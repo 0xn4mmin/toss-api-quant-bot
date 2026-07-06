@@ -56,7 +56,7 @@ class TokenStore:
     _pending: dict[str, PendingAction] = field(default_factory=dict)
 
     def issue(self, command: str, args: str) -> str:
-        token = secrets.token_hex(4)
+        token = secrets.token_hex(8)  # 64bit — 소유자 게이트 뒤의 2차 방어
         self._pending[token] = PendingAction(command, args, self.clock())
         return token
 

@@ -71,6 +71,18 @@ class Credentials:
 
     @classmethod
     def from_files(cls, client_id_path: str | Path, client_secret_path: str | Path) -> "Credentials":
+        import logging
+        import stat
+
+        for p in (Path(client_id_path), Path(client_secret_path)):
+            try:
+                mode = p.stat().st_mode
+            except OSError as e:
+                raise OpenApiAuthError(f"자격증명 파일을 읽을 수 없다: {e}") from e
+            if mode & (stat.S_IRWXG | stat.S_IRWXO):
+                logging.getLogger("quantbot.adapter.official").warning(
+                    "자격증명 파일 %s 이 그룹/전체 접근 가능하다 — chmod 600 권장 (ISO)", p,
+                )
         try:
             cid = Path(client_id_path).read_text(encoding="utf-8").strip()
             sec = Path(client_secret_path).read_text(encoding="utf-8").strip()
@@ -94,6 +106,13 @@ class OpenApiPolicy:
         base_url = cfg.get("base_url")
         if not isinstance(base_url, str) or not base_url.startswith("http"):
             raise OpenApiError(f"adapter.official.base_url: URL 필요: {base_url!r}")
+        # 자격증명이 실리는 경로 — 평문 HTTP는 루프백(테스트)만 허용
+        if base_url.startswith("http://") and not any(
+            base_url.startswith(f"http://{h}") for h in ("127.0.0.1", "localhost")
+        ):
+            raise OpenApiError(
+                f"비-루프백 평문 HTTP 금지 (자격증명 보호): {base_url!r}"
+            )
         vals = {}
         for key in ("timeout_s", "max_retries", "backoff_base_s"):
             v = cfg.get(key)

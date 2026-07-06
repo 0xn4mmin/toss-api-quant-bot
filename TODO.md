@@ -1,8 +1,28 @@
 # TODO — 소유자(사람)만 할 수 있는 일
 
-코드는 Phase 0–6 전부 구현·테스트 완료(184 passed). 아래는 **외부 자원(키·바이너리·
-계좌·시간)이 필요해서 기계가 대신할 수 없는 것들**이다. 순서대로 하면 된다.
-각 항목의 근거 조항을 병기한다.
+코드는 Phase 0–6 전부 구현·테스트 완료(190 passed, 보안 감사 수정 5건 반영).
+아래는 **외부 자원(키·바이너리·계좌·시간)이 필요해서 기계가 대신할 수 없는
+것들**이다. 순서대로 하면 된다. 각 항목의 근거 조항을 병기한다.
+
+---
+
+## ⚡ 내일 테스트 체크리스트 (30–60분, 이 순서대로)
+
+1. [ ] `git pull && uv sync && uv run pytest` → **190 passed** 확인 (다른 머신 검증)
+2. [ ] WTS > 설정 > Open API 키 발급 → `var/secrets/toss_client_id`·`toss_client_secret`
+       배치 + `chmod 600 var/secrets/*` (권한 틀리면 봇이 경고를 찍는다)
+3. [ ] `uv run quantbot api-verify` → 10개 전부 OK인지. **DRIFT 한 줄이라도 나오면
+       출력 전체를 복사해두기** (계약 실측 확정의 재료 — 버그 아님, §I8 정상 작업)
+4. [ ] GET /accounts 결과의 `accountSeq`를 runtime.yaml `adapter.official.account_seq`에
+       기입 → `uv run quantbot api-verify --account` (16개 전부)
+5. [ ] `uv run quantbot fetch-candles --symbols AAPL --days 30 --out var/data/smoke.csv`
+       → CSV 생김·값 상식적인지 (30봉 스모크 — 본 적재는 5년치, 아래 §5)
+6. [ ] BotFather로 봇 생성 → 토큰 배치 → 봇에게 /start → chat id를 runtime.yaml
+       `telegram.owner_chat_id`에 기입 → `uv run quantbot run` → 폰에서 `/status`,
+       `/pause`, `/resume`(preview→confirm 흐름) 눌러보기. **run은 유일한 미검증
+       조립 코드 — 이상하면 출력째로 세션에 붙여넣기**
+7. [ ] (tossctl 있으면) `tossctl doctor` → `uv run quantbot collect-flows --screener
+       kr_flows` → registry에 백필 깊이 기록 확인 → crontab 등록
 
 ---
 

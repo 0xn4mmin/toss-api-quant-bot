@@ -87,14 +87,22 @@ def block_bootstrap_mdd_percentile(
 
 def stress_window_mdds(
     dates: list[str], equity: np.ndarray, windows: tuple[tuple[str, str], ...]
-) -> dict[str, float]:
-    """OOS 곡선과 겹치는 스트레스 창별 구간 MDD (§S8 c)."""
+) -> tuple[dict[str, float], list[str]]:
+    """스트레스 창별 구간 MDD + 미커버 창 목록 (§S8 c).
+
+    창은 의무다(§S7) — OOS 곡선이 창을 커버하지 않으면 '통과'가 아니라
+    '검증 불가'이고, 판정(G2)은 fail-closed로 불합격 처리한다.
+    """
     out: dict[str, float] = {}
+    uncovered: list[str] = []
     for start, end in windows:
+        key = f"{start}/{end}"
         idx = [i for i, d in enumerate(dates) if start <= d <= end]
         if len(idx) >= 2:
-            out[f"{start}/{end}"] = mdd(equity[idx[0] : idx[-1] + 1])
-    return out
+            out[key] = mdd(equity[idx[0] : idx[-1] + 1])
+        else:
+            uncovered.append(key)
+    return out, uncovered
 
 
 def _run_sha(
@@ -171,7 +179,9 @@ def evaluate_oos(
         m.initial_capital_krw,
         gates.g2_mdd_percentile,
     )
-    stress = stress_window_mdds(dates, equity, gates.g2_stress_windows)
+    stress, stress_uncovered = stress_window_mdds(
+        dates, equity, gates.g2_stress_windows
+    )
 
     order_notionals = [x for r in wf.oos_sims for x in r.order_notionals]
     avg_order_notional = float(np.mean(order_notionals)) if order_notionals else 0.0
@@ -194,6 +204,7 @@ def evaluate_oos(
         "BT-G1": oos_mdd <= gates.g1_max_oos_mdd,
         "BT-G2": (
             p_mdd <= gates.g2_p95_mdd_max
+            and not stress_uncovered  # 의무 창 미커버 = 검증 불가 = 불합격 (fail-closed)
             and all(v <= gates.g2_stress_mdd_max for v in stress.values())
         ),
         "BT-G3": oos_cagr > gates.g3_min_cagr and oos_sharpe >= gates.g3_min_sharpe,
@@ -227,6 +238,7 @@ def evaluate_oos(
         "is_sharpe_mean": is_sharpe_mean,
         "bootstrap_mdd_percentile": p_mdd,
         "stress_window_mdds": stress,
+        "stress_windows_uncovered": stress_uncovered,
         "win_rate": len(wins) / len(trades) if trades else 0.0,
         "profit_factor": gross_win / gross_loss if gross_loss > 0 else 0.0,
         "annual_turnover": turnover,

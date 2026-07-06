@@ -165,28 +165,48 @@ def cmd_fetch_candles(args: argparse.Namespace) -> int:
     return 0
 
 
-def _grid_signal_builder(strategy, tdpw: int):
-    """그리드 조합(주 단위 선언)을 슬롯 파라미터(거래일)로 번역하는 SignalFn."""
+def _grid_signal_builder(
+    strategy, tdpw: int,
+    index_symbol: str | None = None,
+    vix_symbol: str | None = None,
+):
+    """그리드 조합(주 단위 선언)을 슬롯 파라미터(거래일)로 번역하는 SignalFn.
+
+    index/vix 심볼이 주어지면 그리드의 레짐 파라미터(ma_len·vix_threshold·e_min)와
+    전략 파일의 caution_exposure를 함께 배선한다 — 레짐 필터는 MDD 예산의 첫
+    방어선(§S4)이라 백테스트에서 빠지면 판정 자체가 왜곡된다.
+    """
     from quantbot.strategy.slots.pipeline import build_us_core_signal
 
-    cap_note = strategy.sizing.sleeves  # 캡은 엔진 invariants가 주입 (아래 cmd에서)
-
-    def make(params: dict, cap: float):
-        slot_params = {
-            "lookback": int(params["lookback_wk"]) * tdpw,
-            "skip": int(params["skip_wk"]) * tdpw,
-            "abs_filter": bool(params.get("abs_filter", False)),
-            "n": int(params["n"]),
-            "exit_buffer": float(params["exit_buffer"]),
-        }
-        return build_us_core_signal(slot_params, cap=cap)
+    regime_decl = next(
+        (d for d in strategy.signals if d.slot == "regime_filter"), None
+    )
 
     def signal_fn_factory(cap: float):
         def signal_fn(view, params):
-            return make(params, cap)(view, None)
+            slot_params = {
+                "lookback": int(params["lookback_wk"]) * tdpw,
+                "skip": int(params["skip_wk"]) * tdpw,
+                "abs_filter": bool(params.get("abs_filter", False)),
+                "n": int(params["n"]),
+                "exit_buffer": float(params["exit_buffer"]),
+            }
+            if index_symbol and vix_symbol:
+                slot_params.update({
+                    "ma_len": int(params["ma_len"]),
+                    "vix_threshold": float(params["vix_threshold"]),
+                    "e_min": float(params["e_min"]),
+                    "caution_exposure": float(
+                        regime_decl.params["caution_exposure"]
+                    ),
+                })
+            fn = build_us_core_signal(
+                slot_params, cap=cap,
+                index_symbol=index_symbol, vix_symbol=vix_symbol,
+            )
+            return fn(view, None)
         return signal_fn
 
-    _ = cap_note
     return signal_fn_factory
 
 
@@ -213,12 +233,29 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     cap = inv.position.max_weight_pct / 100.0
     tdpw = int(yaml_mod.load_file(args.config)["methodology"].get(
         "trading_days_per_week", 5))
+    # 레짐 필터 fail-closed: 전략이 선언했는데 입력이 없으면 데이터를 열기 전에 거부
+    declares_regime = any(d.slot == "regime_filter" for d in strategy.signals)
+    index_symbol = args.index_symbol or None
+    vix_symbol = args.vix_symbol or None
+    if declares_regime and not (index_symbol and vix_symbol):
+        if not args.allow_no_regime:
+            raise SystemExit(
+                "전략이 regime_filter를 선언했다 — --index-symbol/--vix-symbol로 "
+                "데이터 열을 지정하거나, 명시적으로 --allow-no-regime을 줘라 "
+                "(레짐 없는 판정은 MDD 방어선이 빠진 왜곡이다, §S4)"
+            )
+        print("⚠ --allow-no-regime: 레짐 필터 없이 판정 — 결과는 §S8 H1 검증에 못 쓴다")
+
     store = MarketDataStore.from_csv(args.data)
     data_range = (args.start or store.date(0),
                   args.end or store.date(len(store) - 1))
     sid = f"{strategy.meta.id}.v{strategy.meta.version}"
     order_unit = strategy.sizing.order_unit
-    signal_fn = _grid_signal_builder(strategy, tdpw)(cap)
+    for s in (index_symbol, vix_symbol):
+        if s and s not in store.symbols:
+            raise SystemExit(f"데이터에 {s} 열이 없다 — fetch-candles로 포함시켜라")
+
+    signal_fn = _grid_signal_builder(strategy, tdpw, index_symbol, vix_symbol)(cap)
 
     with Registry(Path(args.var_dir) / "registry.db") as registry:
         sha = prereg.seal(registry, sid, grid, data_range,
@@ -278,6 +315,10 @@ def cmd_run(args: argparse.Namespace) -> int:
         config=WatcherConfig.from_runtime_yaml(args.runtime),
         positions=lambda: {},
     )
+    from quantbot.engine.watcher import restore_hold_state
+
+    if restore_hold_state(registry, state):
+        print("⚠ 이전 fail-safe hold가 해제되지 않은 채 재시작 — hold 상태로 기동 (RISK-06)")
     tg = TelegramClient.from_token_file(
         tg_cfg["token_path"], timeout_s=10.0,
         poll_timeout_s=float(tg_cfg.get("poll_timeout_s", 25)),
@@ -354,6 +395,10 @@ def main(argv: list[str] | None = None) -> int:
     p_bt.add_argument("--data", required=True, help="fetch-candles가 만든 CSV")
     p_bt.add_argument("--start", default="", help="데이터 범위 시작일 (기본: 전체)")
     p_bt.add_argument("--end", default="", help="데이터 범위 종료일")
+    p_bt.add_argument("--index-symbol", default="", help="레짐 지수 데이터 열 (예: SPX)")
+    p_bt.add_argument("--vix-symbol", default="", help="VIX 데이터 열")
+    p_bt.add_argument("--allow-no-regime", action="store_true",
+                      help="레짐 없이 판정 (H1 검증 불가 — 명시적 확인)")
     p_bt.add_argument("--var-dir", default="var")
     p_bt.set_defaults(fn=cmd_backtest)
 

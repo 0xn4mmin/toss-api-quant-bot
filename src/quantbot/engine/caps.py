@@ -133,6 +133,8 @@ def check(
     cap = inv.position.max_weight_pct / PCT
     budget_cash = cash_krw
     count = state.daily_order_count
+    # 같은 배치에서 이미 통과한 매수 명목가 — 종목 쪼개기로 캡을 우회 못 하게
+    pending_buy_krw: dict[str, float] = {}
 
     for intent in intents:
         if state.refuse_all:
@@ -163,7 +165,9 @@ def check(
                 ))
                 continue
             weight_after = (
-                position_value_krw.get(intent.symbol, 0.0) + notional
+                position_value_krw.get(intent.symbol, 0.0)
+                + pending_buy_krw.get(intent.symbol, 0.0)
+                + notional
             ) / equity_krw
             if weight_after > cap + 1e-12:
                 rejected.append((
@@ -173,6 +177,9 @@ def check(
                 ))
                 continue
             budget_cash -= notional
+            pending_buy_krw[intent.symbol] = (
+                pending_buy_krw.get(intent.symbol, 0.0) + notional
+            )
         count += 1
         cleared.append(ClearedIntent(
             symbol=intent.symbol, side=intent.side, quantity=intent.quantity,
