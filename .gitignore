@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# runtime state (IMPL-01: var/ = registry.db, flows.db, artifacts/, logs/)
+var/*
+!var/.gitkeep

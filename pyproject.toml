@@ -1,0 +1,22 @@
+[project]
+name = "quantbot"
+version = "0.1.0"
+description = "Toss quant bot — QUANTBOT-IMPL v1.0 (IMPL-01)"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2",
+    "numpy>=1.26",
+]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/quantbot"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

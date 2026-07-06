@@ -1,0 +1,11 @@
+# config/runtime.yaml — 실행 환경 설정 (IMPL-01)
+# live_trading 은 기본 false — Phase 7 커미셔닝 전에는 켜지 않는다.
+
+live_trading: false
+
+execution_window:
+  kr_timezone: "Asia/Seoul"
+  us_timezone: "America/New_York"
+
+telegram:
+  token_path: "var/secrets/telegram_token"
