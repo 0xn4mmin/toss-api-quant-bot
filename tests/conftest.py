@@ -131,3 +131,34 @@ def uptrend_store(tmp_path):
     return MarketDataStore.from_csv(
         write_csv(tmp_path / "up.csv", dates, closes)
     )
+
+
+# ── Phase 2: 어댑터 테스트 인프라 (가짜 tossctl — 진짜 subprocess 경로) ──
+
+FAKE_TOSSCTL = Path(__file__).resolve().parent / "fake_tossctl.py"
+TOSSCTL_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "tossctl"
+
+
+def make_run_policy(**overrides):
+    from quantbot.adapter.proc import RunPolicy
+
+    kw = dict(
+        binary=str(FAKE_TOSSCTL),
+        timeout_s=5.0,
+        max_retries=2,
+        backoff_base_s=0.0,          # 테스트에선 대기 없이
+        rate_min_interval_s=0.0,
+    )
+    kw.update(overrides)
+    return RunPolicy(**kw)
+
+
+@pytest.fixture
+def tossctl_runner(monkeypatch):
+    from quantbot.adapter.proc import TossctlRunner
+
+    monkeypatch.setenv("FAKE_TOSSCTL_FIXTURES", str(TOSSCTL_FIXTURES))
+    monkeypatch.delenv("FAKE_TOSSCTL_FAIL_FILE", raising=False)
+    monkeypatch.delenv("FAKE_TOSSCTL_SLEEP", raising=False)
+    monkeypatch.delenv("FAKE_TOSSCTL_DUMP_ARGS", raising=False)
+    return TossctlRunner(make_run_policy())

@@ -1,0 +1,13 @@
+{
+ "preset": "kr_flows",
+ "rows": [
+  {
+   "symbol": "005930",
+   "name": "삼성전자"
+  },
+  {
+   "symbol": "000660",
+   "name": "SK하이닉스"
+  }
+ ]
+}

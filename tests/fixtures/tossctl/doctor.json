@@ -1,0 +1,15 @@
+{
+ "ok": true,
+ "checks": [
+  {
+   "name": "auth",
+   "status": "pass",
+   "detail": null
+  },
+  {
+   "name": "network",
+   "status": "pass",
+   "detail": "12ms"
+  }
+ ]
+}

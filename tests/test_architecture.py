@@ -43,7 +43,9 @@ COMPOSITION_ROOTS: frozenset[str] = frozenset({"quantbot.cli"})
 # 규칙 2·4·5: 모듈 → 그 모듈을 import할 수 있는 유일한 모듈들
 EXCLUSIVE_IMPORTERS: dict[str, frozenset[str]] = {
     "subprocess": frozenset({"quantbot.adapter.proc"}),
-    "quantbot.adapter.order": frozenset({"quantbot.engine.gate"}),
+    # Phase 2(조회 표면): 주문 경로는 어디서도 import 불가.
+    # Phase 4에서 frozenset({"quantbot.engine.gate"}) 단독 허용으로 완화한다.
+    "quantbot.adapter.order": frozenset(),
     "quantbot.strategy.translator": frozenset(),  # ISO-02: 별도 프로세스로만
 }
 
@@ -51,6 +53,14 @@ EXCLUSIVE_IMPORTERS: dict[str, frozenset[str]] = {
 EXCLUSIVE_PATH_LITERALS: dict[str, frozenset[str]] = {
     "invariants.yaml": frozenset({"quantbot.engine.invariants"}),
 }
+
+# 규칙 6: tossctl 주문 네임스페이스 토큰 "order"는 아래 모듈 밖에 존재할 수 없다 —
+# 조회 표면(md/mkt/acct/ledger/health/wl)이 주문 명령을 조립하는 것 자체가 불가능하다.
+# (proc은 주문 계열 재시도 금지·차단 가드에 토큰이 필요하고, order.py는 GATE 전용 표면)
+ORDER_TOKEN = "order"
+ORDER_TOKEN_ALLOWED: frozenset[str] = frozenset(
+    {"quantbot.adapter.proc", "quantbot.adapter.order"}
+)
 
 
 def _module_name(path: Path) -> str:
@@ -177,6 +187,22 @@ def test_invariants_path_literal_is_exclusive():
                         f"{name}:{node.lineno} 문자열 {node.value!r}  ({path})"
                     )
     assert not violations, "invariants 경로 접근 위반 (ISO-01):\n" + "\n".join(violations)
+
+
+def test_order_command_token_is_confined():
+    """조회 계층 어디에도 'order' 명령 토큰이 없다 — 주문 명령 조립이 표현 불가능."""
+    violations: list[str] = []
+    for name, path, tree in ALL_MODULES:
+        if name in ORDER_TOKEN_ALLOWED or not _is_within(name, "quantbot.adapter"):
+            continue
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Constant)
+                and isinstance(node.value, str)
+                and (node.value == ORDER_TOKEN or node.value.startswith(ORDER_TOKEN + " "))
+            ):
+                violations.append(f"{name}:{node.lineno} {node.value!r}  ({path})")
+    assert not violations, "'order' 토큰 격리 위반:\n" + "\n".join(violations)
 
 
 def test_composition_root_still_obeys_exclusive_rules():

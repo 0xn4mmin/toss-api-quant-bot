@@ -9,3 +9,11 @@ execution_window:
 
 telegram:
   token_path: "var/secrets/telegram_token"
+
+# 어댑터 실행 정책 (IMPL-03) — 수치는 코드가 아니라 여기서 주입
+adapter:
+  binary: "tossctl"
+  timeout_s: 30
+  max_retries: 2              # 조회 계열만 — 주문 계열은 구조적으로 재시도 0 (proc.py)
+  backoff_base_s: 0.5         # 지수 백오프 기저
+  rate_min_interval_s: 0.35   # 호출 간 최소 간격 (RISK-01 호출량 예의)
