@@ -146,15 +146,22 @@ def build_dual_momentum_signal(
     vol_target_spec: VolTarget | None = None,
     vol_scalar_band: float | None = None,
     excluded: frozenset[str] = frozenset(),  # 데이터 열 중 비자산(VIX 등) 제외
+    selection_every: int = 1,  # 선택 주기 (호출 단위) — monthly cadence면 >1
 ):
-    """자산군 듀얼 모멘텀 시그널 (STRAT v1.4) — Phase 1 러너 SignalFn 호환.
+    """자산군 듀얼 모멘텀 시그널 (STRAT v1.4, v2 히스테리시스) — SignalFn 호환.
 
-    params: lookback, top_n, skip(선택). 비중은 1/top_n — 절대 필터에 걸린
-    슬롯은 현금으로 남는다(Antonacci의 현금 도피가 MDD 방어의 핵심).
-    주의: 단일 ETF 고비중은 INV-01(12% 캡)과 상호작용한다 — 캡은 호출자
-    (엔진 invariants)가 주입하고, 클리핑 잔여는 현금이 된다.
+    params: lookback, top_n, skip(선택), exit_buffer(선택, 기본 1.0).
+    비중은 1/top_n — 절대 필터에 걸린 슬롯은 현금으로 남는다(Antonacci의
+    현금 도피가 MDD 방어의 핵심).
+
+    selection_every (v2): 자산 선택은 매 selection_every번째 호출에서만 갱신
+    (월간 로테이션 표준 — 휩쏘 억제). 사이에는 보유 유지, 절대 모멘텀 음전
+    자산만 즉시 이탈(방어는 주기를 기다리지 않는다). vol 스칼라는 매 호출 갱신.
+    주의: 단일 ETF 고비중은 INV-01/01a 캡과 상호작용 — 캡은 호출자가 주입.
     """
     smoother = _ScalarSmoother(vol_scalar_band)
+    holdings: list[str] = []
+    call_count = [0]
 
     def signal(view, p_override: Mapping[str, object] | None = None) -> dict[str, float]:
         p = dict(params)
@@ -162,10 +169,21 @@ def build_dual_momentum_signal(
             p.update(p_override)
         closes = {s: view.close(s) for s in view.symbols if s not in excluded}
         top_n = int(p["top_n"])
-        selection = dual_momentum.dual_momentum_select(
-            closes, lookback=int(p["lookback"]), top_n=top_n,
-            skip=int(p.get("skip", 0)),
-        )
+        due = call_count[0] % max(selection_every, 1) == 0
+        call_count[0] += 1
+        if due:
+            selection = dual_momentum.dual_momentum_select(
+                closes, lookback=int(p["lookback"]), top_n=top_n,
+                skip=int(p.get("skip", 0)),
+                holdings=holdings, exit_buffer=float(p.get("exit_buffer", 1.0)),
+            )
+        else:
+            # 선택 주기 사이 — 보유 유지하되 절대 모멘텀 음전은 즉시 이탈
+            mom = trend_score.momentum(
+                closes, int(p["lookback"]), int(p.get("skip", 0))
+            )
+            selection = [s for s in holdings if mom.get(s, 0.0) > 0.0]
+        holdings[:] = selection
         if not selection:
             return {}  # 절대 필터 전멸 — 전액 현금
         exposure = 1.0

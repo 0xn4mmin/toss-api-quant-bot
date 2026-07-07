@@ -65,6 +65,7 @@ def simulate(
     cost_model: CostModel,
     m: Methodology,
     order_unit: str = "fractional",
+    no_trade_band: float = 0.0,
 ) -> SimResult:
     """[start_idx, end_idx] 구간을 재생한다 (양끝 포함).
 
@@ -74,7 +75,13 @@ def simulate(
     order_unit (ARCH v1.1 결정 2): 전략 선언 단위 그대로 평가한다 —
     whole = 정수 수량 집행(절사에 의한 비중 왜곡·현금 잔류를 그대로 반영),
     fractional = 금액 기반 배분(수량 소수점 허용).
+
+    no_trade_band (§S5 3단, 2026-07-07 충실도 교정): |변화 비중| ≤ band 인
+    주문은 생략 — 실운용(portfolio.no_trade_band_orders)과 동일 규칙. 이게
+    없으면 백테스트가 매주 드리프트 매매까지 세어 회전율·비용을 과대평가한다.
     """
+    if no_trade_band < 0:
+        raise SimError(f"no_trade_band ≥ 0: {no_trade_band}")
     if order_unit not in ORDER_UNITS:
         raise SimError(f"order_unit ∈ {ORDER_UNITS}: {order_unit!r}")
     if not (0 <= start_idx <= end_idx < len(store)):
@@ -103,7 +110,9 @@ def simulate(
                 cur_q = qty.get(s, 0.0)
                 px = store.close_at(s, i)
                 target_q = snap((target_w * eq_now) / cost_model.buy_price(px))
-                if cur_q - target_q > 0:
+                if (cur_q - target_q) * px <= no_trade_band * eq_now:
+                    pass  # 변화 비중이 밴드 안 — 주문 생략 (§S5 3단)
+                elif cur_q - target_q > 0:
                     sell_q = cur_q - target_q
                     exec_px = cost_model.sell_price(px)
                     notional = sell_q * exec_px
@@ -130,8 +139,8 @@ def simulate(
                 exec_px = cost_model.buy_price(px)
                 target_q = snap((target_w * eq_now) / exec_px)
                 buy_q = target_q - cur_q
-                if buy_q <= 0:
-                    continue
+                if buy_q <= 0 or buy_q * exec_px <= no_trade_band * eq_now:
+                    continue  # 밴드 안 — 주문 생략 (§S5 3단)
                 notional = buy_q * exec_px
                 fee = cost_model.commission(notional)
                 if notional + fee > cash:  # 레버리지 0 — 현금 한도로 축소

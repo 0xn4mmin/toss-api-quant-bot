@@ -191,3 +191,87 @@ def test_vol_scalar_band_schema():
     d2["sizing"].update(vol_target_annual=0.12, vol_lookback_days=60,
                         vol_scalar_band=0.1)
     assert parse_strategy(d2).sizing.vol_scalar_band == 0.1
+
+
+# ── dual momentum v2 — 히스테리시스·월간 선택·시뮬 밴드 (2026-07-07) ────
+
+
+def test_dual_momentum_hysteresis_keeps_holdings_in_buffer():
+    from quantbot.strategy.slots.dual_momentum import dual_momentum_select
+
+    # 순위: A > B > C > D (전부 양수)
+    closes = _closes(A=0.004, B=0.003, C=0.002, D=0.001)
+    # 보유 C: 순위 3 ≤ top_n(2)×1.5=3 → 유지, 빈 슬롯은 최상위 A
+    sel = dual_momentum_select(closes, lookback=30, top_n=2,
+                               holdings=["C"], exit_buffer=1.5)
+    assert sel == ["A", "C"]
+    # 보유 D: 순위 4 > 3 → 이탈 → 신규 top 2
+    sel2 = dual_momentum_select(closes, lookback=30, top_n=2,
+                                holdings=["D"], exit_buffer=1.5)
+    assert sel2 == ["A", "B"]
+    # 보유 자산이 절대 모멘텀 음전 → 순위 무관 즉시 이탈
+    bear_c = _closes(A=0.004, B=0.003, C=-0.001, D=0.001)
+    sel3 = dual_momentum_select(bear_c, lookback=30, top_n=2,
+                                holdings=["C"], exit_buffer=1.5)
+    assert "C" not in sel3
+
+
+def test_dual_momentum_monthly_selection_cycle():
+    """선택은 매 4번째 호출에서만 — 사이에는 보유 유지, 음전만 즉시 이탈."""
+    import numpy as np
+    from quantbot.strategy.slots.pipeline import build_dual_momentum_signal
+
+    up = {s: 100.0 * np.cumprod(1 + g * np.ones(60))
+          for s, g in {"SPY": 0.003, "TLT": 0.002, "GLD": 0.001}.items()}
+    flipped = {s: 100.0 * np.cumprod(1 + g * np.ones(60))
+               for s, g in {"SPY": 0.001, "TLT": 0.002, "GLD": 0.003}.items()}
+
+    def view(data):
+        class V:
+            symbols = tuple(sorted(data))
+            def close(self, s):
+                return data[s]
+        return V()
+
+    fn = build_dual_momentum_signal(
+        {"lookback": 30, "top_n": 2, "exit_buffer": 1.0}, cap=0.50,
+        selection_every=4,
+    )
+    assert set(fn(view(up), None)) == {"SPY", "TLT"}       # 1회차: 선택
+    for _ in range(3):                                     # 2~4회차: 순위 뒤집혀도 유지
+        assert set(fn(view(flipped), None)) == {"SPY", "TLT"}
+    assert set(fn(view(flipped), None)) == {"GLD", "TLT"}  # 5회차: 재선택
+
+
+def test_sim_no_trade_band_suppresses_drift_trades(uptrend_store):
+    """§S5 3단 충실도: 고정 목표 비중이면 최초 매수 후 드리프트 매매가 없다."""
+    from quantbot.backtest.sim import simulate
+    from conftest import LOW_COSTS, SMALL_METH, buy_and_hold_first
+
+    no_band = simulate(uptrend_store, 0, 40, buy_and_hold_first, {"weight": 0.5},
+                       LOW_COSTS, SMALL_METH)
+    banded = simulate(uptrend_store, 0, 40, buy_and_hold_first, {"weight": 0.5},
+                      LOW_COSTS, SMALL_METH, no_trade_band=0.02)
+    assert len(no_band.order_notionals) > 1        # 매주 드리프트 매매 (기존 동작)
+    assert len(banded.order_notionals) == 1        # 밴드 안 — 최초 매수뿐
+
+
+def test_monthly_cadence_schema_and_inv05():
+    from quantbot.engine.approval import static_invariant_check
+    from quantbot.engine.invariants import load_invariants
+
+    d = _valid_dict()
+    d["cadence"]["rebalance"] = "monthly"
+    s = parse_strategy(d)
+    violations = static_invariant_check(
+        s, load_invariants(), {"us_core": ["AAA"]},
+        whitelist={"us_core": {"AAA"}}, stock_master={"AAA": ("STOCK", None)},
+    )
+    assert not any("INV-05" in v for v in violations)      # monthly는 합법
+
+
+def test_dual_momentum_v2_file_parses():
+    s = load_strategy("strategies/dual-momentum.v2.yaml")
+    assert s.cadence.rebalance == "monthly"
+    assert s.entry_exit.exit.params["exit_buffer"] == 1.5
+    assert s.sizing.no_trade_band == 0.02

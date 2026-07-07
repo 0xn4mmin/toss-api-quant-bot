@@ -121,7 +121,9 @@ class Sizing(_Decl):
 
 
 class Cadence(_Decl):
-    rebalance: Literal["weekly"]             # INV-05 대비 정적 검사 지점
+    # INV-05는 "주 1회보다 잦은" 것을 금지 — weekly·monthly 둘 다 합법.
+    # monthly는 자산군 로테이션의 표준 주기 (휩쏘 억제, 2026-07-07 dual v1 교훈)
+    rebalance: Literal["weekly", "monthly"]
     execution_window: dict[str, str]
 
 

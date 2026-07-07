@@ -277,6 +277,7 @@ def _grid_signal_builder(
     strategy, tdpw: int, tdpy: int,
     index_symbol: str | None = None,
     vix_symbol: str | None = None,
+    rebalance_every_n_days: int = 5,
 ):
     """그리드 조합(주 단위 선언)을 슬롯 파라미터(거래일)로 번역하는 SignalFn.
 
@@ -295,6 +296,10 @@ def _grid_signal_builder(
               strategy.sizing.vol_lookback_days, tdpy)
     vband = strategy.sizing.vol_scalar_band
     slots_declared = {d.slot for d in strategy.signals}
+    # 선택 주기: monthly면 리밸런싱 호출 몇 번마다 1회인지 (12 = 달력 상수)
+    selection_every = 1
+    if strategy.cadence.rebalance == "monthly":
+        selection_every = max(round(tdpy / 12 / rebalance_every_n_days), 1)
     regime_decl = next(
         (d for d in strategy.signals if d.slot == "regime_filter"), None
     )
@@ -306,6 +311,9 @@ def _grid_signal_builder(
                     "lookback": int(params["lookback_wk"]) * tdpw,
                     "skip": int(params.get("skip_wk", 0)) * tdpw,
                     "top_n": int(params["top_n"]),
+                    "exit_buffer": float(
+                        strategy.entry_exit.exit.params.get("exit_buffer", 1.0)
+                    ),
                 }
                 fn = build_dual_momentum_signal(
                     slot_params, cap=cap, vol_target_spec=vt,
@@ -313,6 +321,7 @@ def _grid_signal_builder(
                     excluded=frozenset(
                         s for s in (index_symbol, vix_symbol) if s
                     ),
+                    selection_every=selection_every,
                 )
                 return fn(view, None)
             slot_params = {
@@ -418,16 +427,18 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     print(f"종목당 캡 {cap:.0%} ({'INV-01a 분산형 ETF' if cap > inv.position.max_weight_pct / 100.0 else 'INV-01'})"
           " — 기계 검증(leverageFactor)은 승인 게이트가 이중 수행")
     signal_fn = _grid_signal_builder(
-        strategy, tdpw, meth.trading_days_per_year, index_symbol, vix_symbol
+        strategy, tdpw, meth.trading_days_per_year, index_symbol, vix_symbol,
+        rebalance_every_n_days=meth.rebalance_every_n_days,
     )(cap)
 
     with Registry(Path(args.var_dir) / "registry.db") as registry:
+        band = strategy.sizing.no_trade_band
         sha = prereg.seal(registry, sid, grid, data_range,
-                          walkforward.folds_spec(meth, order_unit))
-        print(f"사전등록 봉인 {sha[:12]}… (order_unit={order_unit})")
+                          walkforward.folds_spec(meth, order_unit, band))
+        print(f"사전등록 봉인 {sha[:12]}… (order_unit={order_unit}, band={band})")
         res = judge.evaluate_oos(
             registry, store, sid, grid, data_range,
-            signal_fn, cost_model, meth, gates, order_unit,
+            signal_fn, cost_model, meth, gates, order_unit, band,
         )
     print(f"판정: {'재현 검산' if res.reproduction else res.transition}"
           f" · 시도 {res.n_configs_tried}조합 · artifact {res.artifact_sha[:12]}…")

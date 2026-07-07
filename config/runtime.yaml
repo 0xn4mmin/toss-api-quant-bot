@@ -9,7 +9,7 @@ execution_window:
 
 telegram:
   token_path: "var/secrets/telegram_token"
-  owner_chat_id: null          # TODO: 소유자 chat id (봇에게 /start 후 getUpdates로 확인)
+  owner_chat_id: 2056842749          # TODO: 소유자 chat id (봇에게 /start 후 getUpdates로 확인)
   poll_timeout_s: 25           # 롱폴링 대기
   confirm_ttl_s: 300           # Tier-2 confirm token TTL (TG-05: 5분·단일 사용)
 

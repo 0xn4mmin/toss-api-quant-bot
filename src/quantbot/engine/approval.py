@@ -47,8 +47,10 @@ def static_invariant_check(
     """
     violations: list[str] = []
 
-    # INV-05 — 주기 하한
-    if strategy.cadence.rebalance != "weekly" or inv.rebalance.min_interval_days > 7:
+    # INV-05 — 주기 하한 (선언 주기의 달력 일수 ≥ 하한)
+    cadence_days = {"weekly": 7, "monthly": 30}  # 달력 상수
+    declared = cadence_days.get(strategy.cadence.rebalance)
+    if declared is None or declared < inv.rebalance.min_interval_days:
         violations.append(
             f"INV-05: 리밸런싱 주기 위반 — {strategy.cadence.rebalance!r}, "
             f"하한 {inv.rebalance.min_interval_days}일"

@@ -1,0 +1,47 @@
+# strategies/dual-momentum.v2.yaml — v1 rejected 후속 (기계적 결함 3건 교정)
+# v1 판정(2026-07-07): rejected — 회전율 5.9x·비용 2.25%/yr(휩쏘), MDD 27.2%.
+# v2 변경 (수익 추격 아님 — 비용·충실도 공학, OF-03):
+#   ① 선택 히스테리시스: exit_buffer 1.5 (보유는 top_n×1.5 순위·절대>0 유지 시 지속)
+#   ② 선택 주기 월 1회 (자산군 로테이션 표준) — 절대 모멘텀 음전 이탈은 즉시
+#   ③ no-trade band를 시뮬에도 적용 (실운용 §S5 3단과 동일 규칙 — 충실도 교정)
+# 그리드·자산·vol target은 v1과 동일. 새 id, 새 사전등록 (BT-02).
+# ⚠ 소유자 합의: 이번이 마지막 반복 — 기각 시 INV-04 예산 수준 논의로 전환.
+meta:
+  id: dual-momentum
+  version: 2
+  author: human
+universe:
+  assets:
+    source: whitelist
+    max_symbols: 5              # universe/us_etf.yaml (INV-01a 이중 검증 대상)
+signals:
+  - slot: dual_momentum
+    inputs:
+      - candles:SPY,EFA,TLT,GLD,IEF
+    params:
+      lookback_wk: 26           # [탐색]
+      skip_wk: 0
+      top_n: 2                  # [탐색]
+entry_exit:
+  entry:
+    rule_slot: rank_top_n
+    params:
+      n: 2                      # top_n과 일치
+  exit:
+    rule_slot: rank_drop
+    params:
+      exit_buffer: 1.5          # v2 — 히스테리시스 (확정값, 탐색 금지)
+    stop_loss_pct: 0.10
+sizing:
+  scheme: equal_weight_capped
+  sleeves:
+    assets: 1.0
+  no_trade_band: 0.02           # v2부터 시뮬에도 동일 적용 (§S5 3단)
+  order_unit: fractional
+  vol_target_annual: 0.10
+  vol_lookback_days: 60
+  vol_scalar_band: 0.10
+cadence:
+  rebalance: monthly            # v2 — 선택 주기 월 1회 (INV-05 합법)
+  execution_window:
+    us: "23:00-00:30 KST"
