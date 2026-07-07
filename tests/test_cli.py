@@ -49,7 +49,7 @@ def test_api_verify_all_ok(official_server, tmp_path, capsys):
                    "--symbols", "005930,AAPL", "--account"])
     out = capsys.readouterr().out
     assert rc == 0
-    assert out.count("OK    ") == 16 and "DRIFT GET" not in out
+    assert out.count("OK    ") == 17 and "DRIFT GET" not in out
 
 
 def test_api_verify_reports_drift_and_fails(official_server, tmp_path, capsys):

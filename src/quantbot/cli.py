@@ -70,7 +70,8 @@ def cmd_api_verify(args: argparse.Namespace) -> int:
         checks += [
             ("GET /accounts", lambda: acct.accounts(client)),
             ("GET /holdings", lambda: acct.holdings(client)),
-            ("GET /orders", lambda: ledger.orders_list(client)),
+            ("GET /orders(OPEN)", lambda: ledger.orders_list(client, "OPEN")),
+            ("GET /orders(CLOSED)", lambda: ledger.orders_list(client, "CLOSED")),
             ("GET /buying-power", lambda: tradeinfo.buying_power(client, "KRW")),
             ("GET /sellable-quantity",
              lambda: tradeinfo.sellable_quantity(client, symbols[0])),

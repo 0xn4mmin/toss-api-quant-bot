@@ -14,13 +14,40 @@ from quantbot.adapter.official.contracts import (
 from quantbot.adapter.official.http import OpenApiClient
 
 
+ORDER_STATUS_GROUPS = ("OPEN", "CLOSED")  # 명세: 필수 라이프사이클 그룹 필터
+
+
 def orders_list(
-    client: OpenApiClient, *, cursor: str | None = None
+    client: OpenApiClient,
+    status: str,
+    *,
+    symbol: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    cursor: str | None = None,
+    limit: int | None = None,
 ) -> PaginatedOrderResponse:
-    params = {} if cursor is None else {"cursor": cursor}
+    """주문 목록 — status는 필수 (2026-07-07 실측 확정: 없으면 400 invalid-request).
+
+    OPEN=진행 중(전량 반환, cursor/limit 무시), CLOSED=종료(페이지네이션).
+    from/to는 orderedAt 기준 KST 일자.
+    """
+    if status not in ORDER_STATUS_GROUPS:
+        raise ValueError(f"status ∈ {ORDER_STATUS_GROUPS}: {status!r}")
+    params: dict[str, str] = {"status": status}
+    if symbol is not None:
+        params["symbol"] = symbol
+    if date_from is not None:
+        params["from"] = date_from
+    if date_to is not None:
+        params["to"] = date_to
+    if cursor is not None:
+        params["cursor"] = cursor
+    if limit is not None:
+        params["limit"] = str(limit)
     return call_api(
         client, "/api/v1/orders", "ORDER_HISTORY", PaginatedOrderResponse,
-        params=params or None, with_account=True,
+        params=params, with_account=True,
     )
 
 

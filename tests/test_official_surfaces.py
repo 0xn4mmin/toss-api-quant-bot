@@ -51,7 +51,9 @@ def test_remaining_surfaces(official_client):
     assert accts[0].accountSeq == 1
     hold = acct.holdings(official_client)
     assert hold.items[0].quantity == "1.5" and hold.totalPurchaseAmount.krw == "4800000"
-    orders = ledger.orders_list(official_client)
+    orders = ledger.orders_list(official_client, "CLOSED")
+    with pytest.raises(ValueError, match="status"):
+        ledger.orders_list(official_client, "ALL")  # 명세 밖 값은 호출 전 거부
     assert orders.orders[0].status == "FILLED" and orders.hasNext is False
     detail = ledger.order_detail(official_client, "ord-1")
     assert detail.execution.filledQuantity == "1.5"

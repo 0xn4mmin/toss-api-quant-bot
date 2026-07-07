@@ -16,6 +16,7 @@ telegram:
 # 어댑터 실행 정책 (IMPL-03 v1.1, 이중 소스) — 수치는 코드가 아니라 여기서 주입
 adapter:
   official:                    # 공식 Open API — 실자금 경로 100%
+    account_seq: "1"
     base_url: "https://openapi.tossinvest.com"
     client_id_path: "var/secrets/toss_client_id"          # git 금지·LLM 접근 불가 (ISO)
     client_secret_path: "var/secrets/toss_client_secret"
