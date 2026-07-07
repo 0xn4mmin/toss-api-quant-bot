@@ -180,8 +180,10 @@ def test_crashed_first_run_does_not_become_reproduction(registry, uptrend_store)
     rng = (uptrend_store.date(0), uptrend_store.date(len(uptrend_store) - 1))
     prereg.seal(registry, "crashy", grid, rng, walkforward.folds_spec(SMALL_METH))
 
-    def exploding(view, params):
-        raise RuntimeError("simulated crash mid-run")
+    def exploding(params):
+        def signal(view):
+            raise RuntimeError("simulated crash mid-run")
+        return signal
 
     with pytest.raises(RuntimeError):
         judge.evaluate_oos(registry, uptrend_store, "crashy", grid, rng,
@@ -283,3 +285,59 @@ def test_effective_cap_and_dual_momentum_excludes_vix():
                                     excluded=frozenset({"VIX"}))
     w = fn(View(), None)
     assert "VIX" not in w and w == {"SPY": 0.50}  # VIX(최고 상승)가 자산으로 안 뽑힘
+
+
+def test_cli_signal_factory_preserves_state_within_sim():
+    """2026-07-07 하네스 버그 회귀: 빌더가 호출마다 클로저를 재생성해 히스테리시스·
+    월간 주기·스무더가 매주 리셋됐다 — 팩토리 계약(시뮬 1회당 상태 1개) 검증."""
+    import numpy as np
+    from quantbot.cli import _grid_signal_builder
+    from quantbot.strategy.loader import load_strategy
+
+    strategy = load_strategy("strategies/dual-momentum.v2.yaml")
+    factory = _grid_signal_builder(
+        strategy, tdpw=5, tdpy=252, vix_symbol="VIX", rebalance_every_n_days=5,
+    )(0.50)
+
+    def view(growths):
+        data = {s: 100.0 * np.cumprod(1 + g * np.ones(200))
+                for s, g in growths.items()}
+        class V:
+            symbols = tuple(sorted(data))
+            def close(self, s):
+                return data[s]
+        return V()
+
+    up = {"SPY": 0.003, "TLT": 0.002, "GLD": 0.001, "IEF": 0.0005,
+          "VIX": 0.0001}
+    # flipped에서 SPY는 순위 4 — 버퍼(top2×1.5=3) 밖이라 재선택 시 이탈해야 함
+    flipped = {"SPY": 0.0005, "TLT": 0.002, "GLD": 0.003, "IEF": 0.001,
+               "VIX": 0.0001}
+
+    fn = factory({"lookback_wk": 6, "skip_wk": 0, "top_n": 2})  # 시뮬 1회 = 상태 1개
+    first = set(fn(view(up)))
+    assert first == {"SPY", "TLT"}
+    for _ in range(3):  # 월간 주기(selection_every=4) 사이 — 순위 뒤집혀도 유지
+        assert set(fn(view(flipped))) == first, "상태가 리셋됐다 — 하네스 버그 재발"
+    assert set(fn(view(flipped))) == {"GLD", "TLT"}  # 4번째 이후 재선택
+
+    fn2 = factory({"lookback_wk": 6, "skip_wk": 0, "top_n": 2})  # 새 시뮬 = 새 상태
+    assert set(fn2(view(up))) == {"SPY", "TLT"}      # 이전 시뮬 상태 누출 없음
+
+
+def test_stateful_signal_reruns_are_deterministic(uptrend_store):
+    """같은 시뮬 2회 = 바이트 동일 — 상태가 시뮬 밖으로 새면 여기서 깨진다."""
+    from quantbot.backtest.sim import simulate
+    from quantbot.strategy.slots.pipeline import build_us_core_signal
+    from conftest import LOW_COSTS, SMALL_METH
+
+    def factory(params):
+        fn = build_us_core_signal(
+            {"lookback": 5, "skip": 1, "abs_filter": True, "n": 2,
+             "exit_buffer": 1.5}, cap=0.99,
+        )
+        return lambda view: fn(view, None)
+
+    a = simulate(uptrend_store, 0, 60, factory, {}, LOW_COSTS, SMALL_METH)
+    b = simulate(uptrend_store, 0, 60, factory, {}, LOW_COSTS, SMALL_METH)
+    assert a.equity == b.equity and a.order_notionals == b.order_notionals

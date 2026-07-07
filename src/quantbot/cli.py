@@ -305,7 +305,8 @@ def _grid_signal_builder(
     )
 
     def signal_fn_factory(cap: float):
-        def signal_fn(view, params):
+        def signal_fn(params):
+            """SignalFn 팩토리 — 시뮬 1회당 1번 호출돼 상태 있는 클로저를 만든다."""
             if "dual_momentum" in slots_declared:
                 slot_params = {
                     "lookback": int(params["lookback_wk"]) * tdpw,
@@ -323,7 +324,7 @@ def _grid_signal_builder(
                     ),
                     selection_every=selection_every,
                 )
-                return fn(view, None)
+                return lambda view: fn(view, None)
             slot_params = {
                 "lookback": int(params["lookback_wk"]) * tdpw,
                 "skip": int(params["skip_wk"]) * tdpw,
@@ -345,7 +346,7 @@ def _grid_signal_builder(
                 index_symbol=index_symbol, vix_symbol=vix_symbol,
                 vol_target_spec=vt, vol_scalar_band=vband,
             )
-            return fn(view, None)
+            return lambda view: fn(view, None)
         return signal_fn
 
     return signal_fn_factory

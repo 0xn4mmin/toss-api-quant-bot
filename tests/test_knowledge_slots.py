@@ -146,12 +146,12 @@ def test_dual_momentum_end_to_end_gate(registry, tmp_path):
     }
     store = MarketDataStore.from_csv(write_csv(tmp_path / "a.csv", dates, closes))
 
-    def signal_fn(view, params):
+    def signal_fn(params):
         fn = build_dual_momentum_signal(
             {"lookback": params["lookback"], "top_n": 2}, cap=0.99,
             vol_target_spec=(0.10, 20, 252),
         )
-        return fn(view, None)
+        return lambda view: fn(view, None)
 
     grid = {"lookback": [10, 20]}
     dr = (store.date(0), store.date(n - 1))

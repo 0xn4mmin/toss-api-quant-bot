@@ -18,8 +18,14 @@ from quantbot.backtest.config import Methodology
 from quantbot.backtest.costs import CostModel
 from quantbot.backtest.data import AsOfView, MarketDataStore
 
-SignalFn = Callable[[AsOfView, dict], dict[str, float]]
-"""(as_of 뷰, params) → {symbol: 목표 비중}. 미포함 종목은 비중 0."""
+SignalFn = Callable[[dict], Callable[[AsOfView], dict[str, float]]]
+"""시그널 팩토리: params → (as_of 뷰 → {symbol: 목표 비중}).
+
+시뮬레이션 1회가 팩토리를 정확히 1번 호출해 상태(히스테리시스·선택 주기·
+스칼라 스무더)를 가진 클로저를 만든다 — 상태는 시뮬 안에서 지속되고, 시뮬
+간에는 공유되지 않는다(폴드·조합 간 누출 차단이 계약이다).
+2026-07-07 교정: 호출마다 클로저를 새로 만들던 이전 계약은 상태를 매주
+리셋시켜 히스테리시스·월간 주기를 무효화했다."""
 
 
 class SimError(ValueError):
@@ -86,6 +92,8 @@ def simulate(
         raise SimError(f"order_unit ∈ {ORDER_UNITS}: {order_unit!r}")
     if not (0 <= start_idx <= end_idx < len(store)):
         raise SimError(f"구간 오류: [{start_idx}, {end_idx}] / len={len(store)}")
+
+    strategy = signal_fn(params)  # 시뮬 1회당 상태 1개 (SignalFn 계약)
 
     def snap(q: float) -> float:
         return float(int(q)) if order_unit == "whole" else q
@@ -165,7 +173,7 @@ def simulate(
 
         # 3) 리밸런싱 날이면 시그널 계산 — 전략은 as_of(i) 뷰만 받는다
         if (i - start_idx) % m.rebalance_every_n_days == 0 and i < end_idx:
-            targets = signal_fn(store.as_of(i), params)
+            targets = strategy(store.as_of(i))
             total_w = sum(targets.values())
             if total_w > 1.0 + 1e-9:
                 raise SimError(f"목표 비중 합 {total_w:.4f} > 1 — 레버리지 금지(INV-02)")

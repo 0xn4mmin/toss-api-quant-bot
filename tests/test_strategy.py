@@ -198,9 +198,9 @@ def test_slots_complete_end_to_end_backtest(registry, uptrend_store):
         cap=0.99,  # 단일 종목 보유 테스트라 캡 완화 (INV-01은 엔진 몫)
     )
 
-    def signal_fn(view, params):
+    def signal_fn(params):
         fn = build_us_core_signal({**params, "n": 1, "exit_buffer": 1.5}, cap=0.99)
-        return fn(view, None)
+        return lambda view: fn(view, None)
 
     rng = (uptrend_store.date(0), uptrend_store.date(len(uptrend_store) - 1))
     prereg.seal(registry, "slots-e2e", grid, rng, walkforward.folds_spec(SMALL_METH))

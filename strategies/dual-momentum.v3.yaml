@@ -1,0 +1,47 @@
+# strategies/dual-momentum.v3.yaml — v2와 동일 선언 (하네스 버그 후 충실 재실행)
+# v2 판정(2026-07-07)은 무효 실험: CLI 빌더가 호출마다 클로저를 재생성해
+# 히스테리시스·월간 주기가 실행되지 않았다 (SignalFn 팩토리 계약으로 교정,
+# 회귀 테스트 고정). v3 = v2 선언 그대로 — 새 반복이 아니라 같은 실험의
+# 충실한 재실행 (봉인은 id 단위라 새 id 필요).
+#   ① 선택 히스테리시스: exit_buffer 1.5 ② 선택 주기 월 1회 (음전 이탈 즉시)
+#   ③ 시뮬 no-trade band (§S5 3단)
+# ⚠ 소유자 합의 유지: 이것이 마지막 반복 — 기각 시 INV-04 예산 논의로 전환.
+meta:
+  id: dual-momentum
+  version: 3
+  author: human
+universe:
+  assets:
+    source: whitelist
+    max_symbols: 5              # universe/us_etf.yaml (INV-01a 이중 검증 대상)
+signals:
+  - slot: dual_momentum
+    inputs:
+      - candles:SPY,EFA,TLT,GLD,IEF
+    params:
+      lookback_wk: 26           # [탐색]
+      skip_wk: 0
+      top_n: 2                  # [탐색]
+entry_exit:
+  entry:
+    rule_slot: rank_top_n
+    params:
+      n: 2                      # top_n과 일치
+  exit:
+    rule_slot: rank_drop
+    params:
+      exit_buffer: 1.5          # v2 — 히스테리시스 (확정값, 탐색 금지)
+    stop_loss_pct: 0.10
+sizing:
+  scheme: equal_weight_capped
+  sleeves:
+    assets: 1.0
+  no_trade_band: 0.02           # v2부터 시뮬에도 동일 적용 (§S5 3단)
+  order_unit: fractional
+  vol_target_annual: 0.10
+  vol_lookback_days: 60
+  vol_scalar_band: 0.10
+cadence:
+  rebalance: monthly            # v2 — 선택 주기 월 1회 (INV-05 합법)
+  execution_window:
+    us: "23:00-00:30 KST"

@@ -64,23 +64,32 @@ def crash_path(n: int, seed: int, crash_at: float, crash_len: int,
     return out
 
 
-def buy_and_hold_first(view, params) -> dict[str, float]:
-    """항상 첫 종목에 전액 — 데이터 경로를 그대로 노출하는 기준 전략."""
-    return {view.symbols[0]: params.get("weight", 1.0)}
+def buy_and_hold_first(params):
+    """항상 첫 종목에 전액 — 기준 전략 (SignalFn 팩토리 계약)."""
+    weight = params.get("weight", 1.0)
+
+    def signal(view) -> dict[str, float]:
+        return {view.symbols[0]: weight}
+
+    return signal
 
 
-def momentum_top1(view, params) -> dict[str, float]:
-    """lookback 수익률 최상위 1종목 전액. 뷰가 짧으면 현금 유지."""
+def momentum_top1(params):
+    """lookback 수익률 최상위 1종목 전액. 뷰가 짧으면 현금 유지 (팩토리)."""
     lb = params["lookback"]
-    best, best_r = None, -np.inf
-    for s in view.symbols:
-        c = view.close(s)
-        if len(c) <= lb:
-            continue
-        r = c[-1] / c[-1 - lb] - 1.0
-        if r > best_r:
-            best, best_r = s, r
-    return {best: 1.0} if best is not None else {}
+
+    def signal(view) -> dict[str, float]:
+        best, best_r = None, -np.inf
+        for s in view.symbols:
+            c = view.close(s)
+            if len(c) <= lb:
+                continue
+            r = c[-1] / c[-1 - lb] - 1.0
+            if r > best_r:
+                best, best_r = s, r
+        return {best: 1.0} if best is not None else {}
+
+    return signal
 
 
 SMALL_METH = Methodology(
