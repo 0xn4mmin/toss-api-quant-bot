@@ -62,7 +62,7 @@ def cmd_api_verify(args: argparse.Namespace) -> int:
         ("GET /candles(adjusted)", lambda: md.candles(client, symbols[0], "1d", 5)),
         ("GET /stocks", lambda: md.stocks(client, symbols)),
         ("GET /stocks/{s}/warnings", lambda: md.warnings(client, symbols[0])),
-        ("GET /exchange-rate", lambda: mkt.exchange_rate(client)),
+        ("GET /exchange-rate", lambda: mkt.exchange_rate(client, "USD", "KRW")),
         ("GET /market-calendar/KR", lambda: mkt.market_calendar_kr(client)),
         ("GET /market-calendar/US", lambda: mkt.market_calendar_us(client)),
     ]

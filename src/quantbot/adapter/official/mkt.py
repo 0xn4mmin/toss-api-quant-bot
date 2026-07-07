@@ -14,8 +14,15 @@ from quantbot.adapter.official.contracts import (
 from quantbot.adapter.official.http import OpenApiClient
 
 
-def exchange_rate(client: OpenApiClient) -> ExchangeRateResponse:
-    return call_api(client, "/api/v1/exchange-rate", "MARKET_INFO", ExchangeRateResponse)
+def exchange_rate(
+    client: OpenApiClient, base_currency: str, quote_currency: str
+) -> ExchangeRateResponse:
+    """환율 조회 — baseCurrency·quoteCurrency는 명세상 필수 (2026-07-07 실측 확정:
+    파라미터 없이 호출하면 400 invalid-request)."""
+    return call_api(
+        client, "/api/v1/exchange-rate", "MARKET_INFO", ExchangeRateResponse,
+        params={"baseCurrency": base_currency, "quoteCurrency": quote_currency},
+    )
 
 
 def market_calendar_kr(client: OpenApiClient) -> KrMarketCalendarResponse:

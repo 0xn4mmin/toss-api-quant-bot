@@ -41,7 +41,7 @@ def test_stock_info_carries_inv11_fields(official_client):
 
 def test_remaining_surfaces(official_client):
     assert md.warnings(official_client, "005930")[0].warningType == "OVERHEATED"
-    fx = mkt.exchange_rate(official_client)
+    fx = mkt.exchange_rate(official_client, "USD", "KRW")
     assert (fx.baseCurrency, fx.rate) == ("USD", "1352.30")
     kr = mkt.market_calendar_kr(official_client)
     assert kr.today.date == "2026-07-06" and kr.previousBusinessDay.integrated is None
@@ -84,7 +84,7 @@ def test_result_mutations_are_rejected_whole(mutation, official_server, official
     else:
         fx["rateChangeType"] = "SIDEWAYS"
     with pytest.raises(SchemaDriftError):
-        mkt.exchange_rate(official_client)
+        mkt.exchange_rate(official_client, "USD", "KRW")
 
 
 def test_envelope_violations_are_drift(official_server, official_client):
@@ -93,10 +93,10 @@ def test_envelope_violations_are_drift(official_server, official_client):
         {"result": official_server.fixtures["/api/v1/exchange-rate"], "extra": 1}
     ).encode()
     with pytest.raises(SchemaDriftError):
-        mkt.exchange_rate(official_client)
+        mkt.exchange_rate(official_client, "USD", "KRW")
     official_server.raw_overrides["/api/v1/exchange-rate"] = b'{"data": {}}'
     with pytest.raises(SchemaDriftError):
-        mkt.exchange_rate(official_client)
+        mkt.exchange_rate(official_client, "USD", "KRW")
 
 
 def test_array_result_where_object_expected_is_drift(official_server, official_client):
