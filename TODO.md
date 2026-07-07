@@ -80,11 +80,14 @@
 
 레짐 필터(§S4)의 입력: US 추세=**SPY**(공식 API), 변동성=**VIX**(CBOE 무료 CSV).
 
-1. 유니버스 + SPY 일봉 5년치 수신 (심볼은 4번 항목의 화이트리스트대로 수정):
+1. 유니버스 + SPY 일봉 수신 (심볼은 4번 항목의 화이트리스트대로 수정).
+   ⚠ **--days 2400 필수**: OOS는 데이터 시작 + 훈련 3년 뒤부터 시작하므로,
+   2020 스트레스 창이 OOS에 들어가려면 데이터가 2017-02 이전에서 시작해야
+   한다 (1800일이면 BT-G2 미커버로 무조건 불합격):
    ```
    $ uv run quantbot fetch-candles \
        --symbols SPY,AAPL,MSFT,NVDA,GOOGL,AMZN,META,TSLA,AVGO,COST,NFLX \
-       --days 1800 --out var/data/us_raw.csv
+       --days 2400 --out var/data/us_raw.csv
    ```
    ✅ 심볼별 `1800봉` 언저리 출력 + `→ var/data/us_raw.csv (...행)`
    ⚠ 봉 수가 심볼마다 크게 다르면(신규 상장 등) 그대로 진행 — 다음 단계가 교집합으로 정렬
@@ -102,7 +105,7 @@
        --cboe-csv var/data/VIX_History.csv --out var/data/us.csv
    ```
    ✅ `→ var/data/us.csv: N종목 × M일 (시작일~종료일)` — M이 1200일(≈5년) 이상인지,
-   시작일이 2021-06 이전인지 확인 (2022 약세장 커버 필수; 2020 커버는 --days를 2200으로)
+   **시작일이 2017-02-01 이전**인지 확인 (아니면 멈추고 세션에 보고 — API 깊이 한계)
 
 ## 4. 유니버스 화이트리스트 (30분, 검토 작업)
 
