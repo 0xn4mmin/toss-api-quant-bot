@@ -215,10 +215,36 @@ def cmd_import_vix(args: argparse.Namespace) -> int:
             vix[parse_date(r[cols["DATE"]])] = (float(r[cols["CLOSE"]]), 0.0)
     rows_by_symbol[args.vix_symbol] = vix
 
-    # 3) 날짜 교집합 정렬 (스토어는 완전 격자를 요구 — 결측은 자르고 보고한다)
+    # 3) 이력 시작일 검사 — 짧은 이력 종목이 전체 창을 자르는 것을 구조로 차단
+    #    (2026-07-07 실측: HON 이력이 2021-05부터라 교집합이 스트레스 창을 잘랐음)
+    if args.require_start:
+        protected = {args.vix_symbol}
+        dropped: list[tuple[str, str]] = []
+        for symbol in sorted(rows_by_symbol):
+            first = min(rows_by_symbol[symbol])
+            if first > args.require_start:
+                if symbol in protected:
+                    raise SystemExit(
+                        f"{symbol} 이력이 {first}부터 — --require-start "
+                        f"{args.require_start}를 충족할 수 없다"
+                    )
+                dropped.append((symbol, first))
+        for symbol, first in dropped:
+            del rows_by_symbol[symbol]
+            print(f"⚠ {symbol}: 이력 시작 {first} > {args.require_start} — 제외 "
+                  "(화이트리스트에서도 빼거나 데이터 소스를 확인해라)")
+        if len(rows_by_symbol) < 2:
+            raise SystemExit("남은 종목이 부족하다 — --require-start를 확인해라")
+
+    # 4) 날짜 교집합 정렬 (스토어는 완전 격자를 요구 — 결측은 자르고 보고한다)
     common = set.intersection(*(set(d) for d in rows_by_symbol.values()))
     if not common:
         raise SystemExit("교집합 날짜가 없다 — 데이터 기간을 확인해라")
+    if args.require_start and min(common) > args.require_start:
+        raise SystemExit(
+            f"병합 시작일 {min(common)} > 요구 {args.require_start} — "
+            "스트레스 창 커버 불가 (봉인 전에 중단)"
+        )
     dates = sorted(common)
     with open(args.out, "w", newline="", encoding="utf-8") as f:
         w = csv_mod.writer(f)
@@ -344,6 +370,29 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     for s in (index_symbol, vix_symbol):
         if s and s not in store.symbols:
             raise SystemExit(f"데이터에 {s} 열이 없다 — fetch-candles로 포함시켜라")
+
+    # 봉인 전 스트레스 창 커버 검사 — OOS는 데이터 시작 + train_days 뒤부터
+    # 시작하므로, 창이 그 범위 밖이면 G2가 무조건 불합격이다. 봉인(영구)을
+    # 소모하기 전에 거부한다 (2026-07-07 실측 재발 방지 — v2 id 소모 사건).
+    lo = store.index_of(data_range[0])
+    oos_start_idx = lo + meth.train_days
+    hi = store.index_of(data_range[1])
+    if oos_start_idx >= hi:
+        raise SystemExit(
+            f"데이터 {hi - lo + 1}일 < train {meth.train_days} + test — 폴드 불가"
+        )
+    oos_start_date = store.date(oos_start_idx)
+    uncoverable = [
+        f"{ws}/{we}" for ws, we in gates.g2_stress_windows
+        if we < oos_start_date or ws > data_range[1]
+    ]
+    if uncoverable and not args.allow_uncovered_stress:
+        raise SystemExit(
+            f"스트레스 창 {uncoverable}이 OOS 범위({oos_start_date}~{data_range[1]}) "
+            "밖 — 봉인 전에 중단한다. 데이터를 더 깊게 받거나(import-vix "
+            "--require-start 참조), 명시적으로 --allow-uncovered-stress를 줘라 "
+            "(그 경우 G2는 확정 불합격)"
+        )
 
     signal_fn = _grid_signal_builder(
         strategy, tdpw, meth.trading_days_per_year, index_symbol, vix_symbol
@@ -484,6 +533,9 @@ def main(argv: list[str] | None = None) -> int:
     p_vix.add_argument("--cboe-csv", required=True, help="CBOE VIX_History.csv")
     p_vix.add_argument("--vix-symbol", default="VIX")
     p_vix.add_argument("--out", required=True, help="병합 결과 CSV")
+    p_vix.add_argument("--require-start", default="",
+                       help="이 날짜(YYYY-MM-DD) 이후 시작하는 짧은 이력 종목은 "
+                            "제외하고, 그래도 미달이면 실패 (스트레스 창 보호)")
     p_vix.set_defaults(fn=cmd_import_vix)
 
     p_bt = sub.add_parser("backtest", help="사전등록·게이트 판정 백테스트 1회")
@@ -498,6 +550,8 @@ def main(argv: list[str] | None = None) -> int:
     p_bt.add_argument("--vix-symbol", default="", help="VIX 데이터 열")
     p_bt.add_argument("--allow-no-regime", action="store_true",
                       help="레짐 없이 판정 (H1 검증 불가 — 명시적 확인)")
+    p_bt.add_argument("--allow-uncovered-stress", action="store_true",
+                      help="스트레스 창 미커버 상태로 봉인 강행 (G2 확정 불합격)")
     p_bt.add_argument("--var-dir", default="var")
     p_bt.set_defaults(fn=cmd_backtest)
 

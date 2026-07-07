@@ -1,0 +1,54 @@
+# strategies/momentum-core.v3.yaml — v2 후속 (가설 동일, 데이터 창 교정)
+# 이력: v1 rejected(INV-04 — MDD 36.8%, 10종목 유니버스의 선별 부재).
+#       v2 rejected(G2 — HON 이력 부족이 교집합 창을 2021-05로 잘라 스트레스 창
+#       미커버; 무효한 창에서 G1 12.4% 통과는 방향성 신호로만 기록. 봉인 소모).
+# v3 = v2와 동일 가설(40→38종목 섹터 분산 + vol targeting 12%), 올바른 창에서 재판정.
+# 재발 방지: import-vix --require-start, backtest 봉인 전 스트레스 창 검사 (2026-07-07).
+meta:
+  id: momentum-core
+  version: 3
+  author: human
+universe:
+  us_core:
+    source: whitelist
+    max_symbols: 38           # universe/us.yaml (HON·LIN 이력 부족 제외)
+    min_adv_usd: 1000000
+signals:
+  - slot: trend_score
+    inputs:
+      - candles:universe
+    params:
+      lookback: 26            # [탐색] lookback_wk
+      skip: 2                 # [탐색] skip_wk
+      abs_filter: true        # [탐색]
+  - slot: regime_filter
+    inputs:
+      - candles:SPY
+      - csv:VIX
+    params:
+      ma_len: 150             # [탐색]
+      vix_threshold: 25       # [탐색]
+      e_min: 0.2              # [탐색]
+      caution_exposure: 0.5   # 고정 (§S4 OF-02)
+entry_exit:
+  entry:
+    rule_slot: rank_top_n
+    params:
+      n: 10                   # [탐색은 {8,10}]
+  exit:
+    rule_slot: rank_drop
+    params:
+      exit_buffer: 1.5        # [탐색]
+    stop_loss_pct: 0.10       # 고정
+sizing:
+  scheme: equal_weight_capped
+  sleeves:
+    us_core: 1.0
+  no_trade_band: 0.02
+  order_unit: fractional
+  vol_target_annual: 0.12     # 확정값, 탐색 금지 (OF-03)
+  vol_lookback_days: 60
+cadence:
+  rebalance: weekly
+  execution_window:
+    us: "23:00-00:30 KST"

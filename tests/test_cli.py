@@ -161,11 +161,20 @@ exit_buffer:
   - 1.5
 """, encoding="utf-8")
 
+    # 스트레스 창(2018-03)이 OOS 시작(train 120일 뒤 ≈ 2018-06) 앞 —
+    # 봉인 전 거부가 먼저 발화해야 한다 (v2 id 소모 사건 재발 방지)
+    with pytest.raises(SystemExit, match="스트레스 창"):
+        cli.main([
+            "backtest", "--strategy", "strategies/momentum-core.v1.yaml",
+            "--grid", str(small_grid), "--config", str(small_cfg),
+            "--gates", str(small_gates), "--data", str(csv_path),
+            "--allow-no-regime", "--var-dir", str(tmp_path / "var"),
+        ])
     rc = cli.main([
         "backtest", "--strategy", "strategies/momentum-core.v1.yaml",
         "--grid", str(small_grid), "--config", str(small_cfg),
         "--gates", str(small_gates), "--data", str(csv_path), "--allow-no-regime",
-        "--var-dir", str(tmp_path / "var"),
+        "--allow-uncovered-stress", "--var-dir", str(tmp_path / "var"),
     ])
     out = capsys.readouterr().out
     assert "사전등록 봉인" in out and "order_unit=fractional" in out
@@ -179,7 +188,7 @@ exit_buffer:
             "backtest", "--strategy", "strategies/momentum-core.v1.yaml",
             "--grid", str(small_grid), "--config", str(small_cfg),
             "--gates", str(small_gates), "--data", str(csv_path), "--allow-no-regime",
-            "--var-dir", str(tmp_path / "var"),
+            "--allow-uncovered-stress", "--var-dir", str(tmp_path / "var"),
         ])
 
 
@@ -211,3 +220,38 @@ def test_fetch_candles_survives_per_symbol_failure(official_server, tmp_path, ca
     assert rc == 1
     assert "BAD: 실패" in printed and "AAPL: 3봉" in printed
     assert "date,symbol,close" in out.read_text()        # 성공분은 기록됨
+
+
+def test_import_vix_require_start_drops_short_history(tmp_path, capsys):
+    """짧은 이력 종목이 전체 창을 자르지 못한다 (2026-07-07 HON 사건 재발 방지)."""
+    import csv
+
+    candles = tmp_path / "candles.csv"
+    with open(candles, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["date", "symbol", "close", "traded_value"])
+        for d in ("2016-12-15", "2021-05-11", "2021-05-12"):
+            w.writerow([d, "SPY", 100, 0])
+        for d in ("2021-05-11", "2021-05-12"):        # 짧은 이력 — 제외 대상
+            w.writerow([d, "HON", 200, 0])
+    cboe = tmp_path / "vix.csv"
+    cboe.write_text("DATE,OPEN,HIGH,LOW,CLOSE\n"
+                    "12/15/2016,10,10,10,11.0\n"
+                    "05/11/2021,20,20,20,20.0\n"
+                    "05/12/2021,21,21,21,21.0\n", encoding="utf-8")
+    out = tmp_path / "m.csv"
+    rc = cli.main(["import-vix", "--data", str(candles), "--cboe-csv", str(cboe),
+                   "--out", str(out), "--require-start", "2017-02-01"])
+    printed = capsys.readouterr().out
+    assert rc == 0
+    assert "HON: 이력 시작 2021-05-11" in printed     # 제외 보고
+    assert "2016-12-15~" in printed                   # 창이 보존된다
+    # 전 종목이 짧으면 실패 (창 확보 불가)
+    with open(candles, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["date", "symbol", "close", "traded_value"])
+        for d in ("2021-05-11", "2021-05-12"):
+            w.writerow([d, "SPY", 100, 0])
+    with pytest.raises(SystemExit, match="require-start"):
+        cli.main(["import-vix", "--data", str(candles), "--cboe-csv", str(cboe),
+                  "--out", str(out), "--require-start", "2017-02-01"])
