@@ -160,3 +160,9 @@ def test_dual_momentum_end_to_end_gate(registry, tmp_path):
                              signal_fn, LOW_COSTS, SMALL_METH, LOOSE_GATES)
     assert res.transition in ("paper", "rejected")        # 판정까지 완주
     assert res.n_configs_tried == 2 * len(res.metrics["per_fold_best"])
+
+def test_momentum_core_v2_file_parses():
+    s = load_strategy("strategies/momentum-core.v2.yaml")
+    assert (s.meta.id, s.meta.version) == ("momentum-core", 2)
+    assert s.sizing.vol_target_annual == 0.12 and s.sizing.vol_lookback_days == 60
+    assert s.universe["us_core"].max_symbols == 40

@@ -137,23 +137,35 @@ def cmd_fetch_candles(args: argparse.Namespace) -> int:
     symbols = [s.strip() for s in args.symbols.split(",") if s.strip()]
     page_size = int(runtime["adapter"]["official"].get("candles_page_size", 200))
 
+    from quantbot.adapter.contracts import SchemaDriftError
+    from quantbot.adapter.official.http import OpenApiError
+
     rows: list[tuple[str, str, float, float]] = []
+    failures: dict[str, str] = {}
     for symbol in symbols:
+        symbol_rows: list[tuple[str, str, float, float]] = []
         before: str | None = None
         got = 0
-        while got < args.days:
-            page = md.candles(client, symbol, "1d",
-                              min(page_size, args.days - got), before=before)
-            if not page.candles:
-                break
-            for c in page.candles:
-                close = float(c.closePrice)
-                rows.append((c.timestamp[:10], symbol, close,
-                             float(c.volume) * close))
-            got += len(page.candles)
-            before = page.nextBefore
-            if before is None:
-                break
+        try:
+            while got < args.days:
+                page = md.candles(client, symbol, "1d",
+                                  min(page_size, args.days - got), before=before)
+                if not page.candles:
+                    break
+                for c in page.candles:
+                    close = float(c.closePrice)
+                    symbol_rows.append((c.timestamp[:10], symbol, close,
+                                        float(c.volume) * close))
+                got += len(page.candles)
+                before = page.nextBefore
+                if before is None:
+                    break
+        except (OpenApiError, SchemaDriftError) as e:
+            # 한 종목 실패가 전체 적재를 죽이지 않는다 — 부분 데이터도 버린다
+            failures[symbol] = f"{type(e).__name__}: {str(e)[:150]}"
+            print(f"⚠ {symbol}: 실패 — {failures[symbol]}")
+            continue
+        rows.extend(symbol_rows)
         print(f"{symbol}: {got}봉")
     rows.sort()
     out = Path(args.out)
@@ -163,6 +175,10 @@ def cmd_fetch_candles(args: argparse.Namespace) -> int:
         w.writerow(["date", "symbol", "close", "traded_value"])
         w.writerows(rows)
     print(f"→ {out} ({len(rows)}행) — 백테스트 데이터 (BT-D2: adjusted=true)")
+    if failures:
+        print(f"⚠ 실패 {len(failures)}종목: {sorted(failures)} — 심볼 표기 확인 후 "
+              "재시도하거나 화이트리스트에서 제외")
+        return 1
     return 0
 
 

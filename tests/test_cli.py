@@ -195,3 +195,19 @@ def test_collect_flows_failure_exits_nonzero(tmp_path, monkeypatch, capsys):
                    "--symbols", "005930,NOFIX", "--var-dir", str(tmp_path / "var")])
     assert rc == 1
     assert "실패 1건" in capsys.readouterr().out
+
+
+def test_fetch_candles_survives_per_symbol_failure(official_server, tmp_path, capsys):
+    """한 종목 404가 전체 적재를 죽이지 않는다 — 실패 보고 + exit 1."""
+    import json as _j
+
+    runtime = write_runtime(tmp_path, official_server.base_url)
+    body = _j.dumps({"error": {"code": "stock-not-found", "message": "없음"}}).encode()
+    official_server.fail_queue.append((404, {}, body))   # 첫 심볼의 첫 GET에서 404
+    out = tmp_path / "c.csv"
+    rc = cli.main(["--runtime", runtime, "fetch-candles",
+                   "--symbols", "BAD,AAPL", "--days", "3", "--out", str(out)])
+    printed = capsys.readouterr().out
+    assert rc == 1
+    assert "BAD: 실패" in printed and "AAPL: 3봉" in printed
+    assert "date,symbol,close" in out.read_text()        # 성공분은 기록됨

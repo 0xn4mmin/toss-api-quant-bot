@@ -1,0 +1,53 @@
+# strategies/momentum-core.v2.yaml — v1 rejected(INV-04, MDD 36.8%) 후속 가설
+# 변경 2가지 (2026-07-07 소유자 승인):
+#   ① 유니버스 10 → 40종목 (섹터 분산 — 횡단면 선별 복원, universe/us.yaml)
+#   ② 변동성 타게팅 오버레이 (연 12% 목표 — STRAT v1.4, MDD 절감 문헌 최다)
+# 시그널 형태·그리드는 v1과 동일 — 새 전략 id의 새 사전등록으로 게이트 재도전 (BT-02).
+meta:
+  id: momentum-core
+  version: 2
+  author: human
+universe:
+  us_core:
+    source: whitelist
+    max_symbols: 40
+    min_adv_usd: 1000000    # 유동성 하한 상수 — 탐색 아님 (§S6)
+signals:
+  - slot: trend_score
+    inputs:
+      - candles:universe
+    params:
+      lookback: 26          # [탐색] lookback_wk
+      skip: 2               # [탐색] skip_wk
+      abs_filter: true      # [탐색]
+  - slot: regime_filter
+    inputs:                 # STRAT v1.3 — US 추세=SPY 프록시, VIX=CBOE CSV
+      - candles:SPY
+      - csv:VIX
+    params:
+      ma_len: 150           # [탐색]
+      vix_threshold: 25     # [탐색] 절대값 계열
+      e_min: 0.2            # [탐색]
+      caution_exposure: 0.5 # 고정 — 탐색 금지 (§S4 OF-02)
+entry_exit:
+  entry:
+    rule_slot: rank_top_n
+    params:
+      n: 10                 # [탐색은 {8,10}] — sleeve 1.0에서 정적 검사 기준은 n=10
+  exit:
+    rule_slot: rank_drop
+    params:
+      exit_buffer: 1.5      # [탐색]
+    stop_loss_pct: 0.10     # 고정 — 서킷브레이커(INV-07) 독립 백업
+sizing:
+  scheme: equal_weight_capped
+  sleeves:
+    us_core: 1.0
+  no_trade_band: 0.02
+  order_unit: fractional
+  vol_target_annual: 0.12   # v2 신규 — 확정값, 탐색 금지 (OF-03)
+  vol_lookback_days: 60
+cadence:
+  rebalance: weekly
+  execution_window:
+    us: "23:00-00:30 KST"

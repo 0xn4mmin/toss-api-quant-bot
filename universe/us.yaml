@@ -1,0 +1,57 @@
+# universe/us.yaml — US 화이트리스트 (INV-03 · INV-11 1차 필터)
+# 2026-07-07 소유자 승인: 섹터 분산 대형주 40종목 (기존 10 + 추가 30).
+# 큐레이션 원칙: 대형·고유동성 / 레버리지·인버스 ETF·ETN 금지(INV-11) /
+# 신규 상장(3년 미만) 지양. 변경은 사람이 직접 편집 + git 커밋.
+#
+# ⚠ BT-D1 미해결: 이 목록은 "현재의" 화이트리스트다 — point-in-time 재구성
+#   전까지 백테스트에 생존편향이 남는다 (TODO 10번).
+symbols:
+  # 기술·커뮤니케이션 (기존 10)
+  - AAPL
+  - MSFT
+  - NVDA
+  - GOOGL
+  - AMZN
+  - META
+  - TSLA
+  - AVGO
+  - COST
+  - NFLX
+  # 헬스케어
+  - JNJ
+  - UNH
+  - LLY
+  # 필수소비
+  - PG
+  - KO
+  - PEP
+  - WMT
+  # 임의소비·소매
+  - HD
+  - MCD
+  - NKE
+  - DIS
+  - BKNG
+  # 금융
+  - JPM
+  - V
+  - MA
+  - BRK.B
+  # 에너지
+  - XOM
+  - CVX
+  # 산업재
+  - CAT
+  - HON
+  - GE
+  - UPS
+  # 소재
+  - LIN
+  # 기술 (소프트웨어·반도체 추가)
+  - ADBE
+  - CRM
+  - ORCL
+  - QCOM
+  - TXN
+  - AMD
+  - INTU
