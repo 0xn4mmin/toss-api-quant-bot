@@ -20,6 +20,25 @@ from quantbot.strategy.slots import dual_momentum, regime, rules, trend_score, v
 VolTarget = tuple[float, int, int]  # (연 목표 변동성, 룩백 거래일, 연간 거래일)
 
 
+class _ScalarSmoother:
+    """스칼라 변경 밴드 — 작은 변동은 직전 노출 유지 (회전율 억제, 선언값).
+
+    band=None이면 통과. 상태는 클로저 수명 = 시뮬레이션 1회 수명 (결정적).
+    """
+
+    def __init__(self, band: float | None) -> None:
+        self._band = band
+        self._last: float | None = None
+
+    def smooth(self, scalar: float) -> float:
+        if self._band is None:
+            return scalar
+        if self._last is not None and abs(scalar - self._last) <= self._band:
+            return self._last
+        self._last = scalar
+        return scalar
+
+
 def _basket_vol_scalar(
     closes_by_symbol: Mapping[str, np.ndarray], vt: VolTarget
 ) -> float:
@@ -66,6 +85,7 @@ def build_us_core_signal(
     index_symbol: str | None = None,
     vix_symbol: str | None = None,
     vol_target_spec: VolTarget | None = None,
+    vol_scalar_band: float | None = None,
 ):
     """US 코어 시그널 함수 (SIG-02) — Phase 1 러너의 SignalFn 시그니처와 호환.
 
@@ -75,6 +95,7 @@ def build_us_core_signal(
     """
     holdings: set[str] = set()
     excluded = {s for s in (index_symbol, vix_symbol) if s}
+    smoother = _ScalarSmoother(vol_scalar_band)
 
     def signal(view, p_override: Mapping[str, object] | None = None) -> dict[str, float]:
         p = dict(params)
@@ -108,9 +129,9 @@ def build_us_core_signal(
                 float(p["caution_exposure"]),
             )
         if vol_target_spec is not None:  # v1.4 오버레이 — 스칼라 ≤ 1이라 캡 보존
-            exposure *= _basket_vol_scalar(
+            exposure *= smoother.smooth(_basket_vol_scalar(
                 {s: closes[s] for s in selection}, vol_target_spec
-            )
+            ))
         if exposure <= 0.0:
             return {}
         equal = exposure / len(selection)   # §S5 1단: sleeve 내 동일가중
@@ -123,6 +144,7 @@ def build_dual_momentum_signal(
     params: Mapping[str, object],
     cap: float,
     vol_target_spec: VolTarget | None = None,
+    vol_scalar_band: float | None = None,
 ):
     """자산군 듀얼 모멘텀 시그널 (STRAT v1.4) — Phase 1 러너 SignalFn 호환.
 
@@ -131,6 +153,8 @@ def build_dual_momentum_signal(
     주의: 단일 ETF 고비중은 INV-01(12% 캡)과 상호작용한다 — 캡은 호출자
     (엔진 invariants)가 주입하고, 클리핑 잔여는 현금이 된다.
     """
+    smoother = _ScalarSmoother(vol_scalar_band)
+
     def signal(view, p_override: Mapping[str, object] | None = None) -> dict[str, float]:
         p = dict(params)
         if p_override:
@@ -145,9 +169,9 @@ def build_dual_momentum_signal(
             return {}  # 절대 필터 전멸 — 전액 현금
         exposure = 1.0
         if vol_target_spec is not None:
-            exposure = _basket_vol_scalar(
+            exposure = smoother.smooth(_basket_vol_scalar(
                 {s: closes[s] for s in selection}, vol_target_spec
-            )
+            ))
         per_asset = exposure / top_n  # 미선택 슬롯 = 현금
         return cap_clip_redistribute({s: per_asset for s in selection}, cap)
 

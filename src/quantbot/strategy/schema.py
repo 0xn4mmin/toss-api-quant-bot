@@ -90,6 +90,9 @@ class Sizing(_Decl):
     # v1.4 — 변동성 타게팅 오버레이 (선택). 전략 확정값·탐색 금지 (OF-03).
     vol_target_annual: float | None = None
     vol_lookback_days: int | None = None
+    # 스칼라 변경 밴드 — |새 스칼라 − 직전| ≤ band 면 노출 유지 (회전율 억제,
+    # 2026-07-07 v3 실측: 매주 재조정이 회전율 5.0x·비용 드래그 2.2%p의 주범)
+    vol_scalar_band: float | None = None
 
     @model_validator(mode="after")
     def _sleeves_sum_to_one(self) -> "Sizing":
@@ -109,6 +112,11 @@ class Sizing(_Decl):
                 raise ValueError(f"vol_target_annual ∈ (0,1]: {self.vol_target_annual}")
             if self.vol_lookback_days < 2:
                 raise ValueError(f"vol_lookback_days ≥ 2: {self.vol_lookback_days}")
+        if self.vol_scalar_band is not None:
+            if self.vol_target_annual is None:
+                raise ValueError("vol_scalar_band는 vol_target 선언과 함께만 쓴다")
+            if not (0.0 < self.vol_scalar_band < 1.0):
+                raise ValueError(f"vol_scalar_band ∈ (0,1): {self.vol_scalar_band}")
         return self
 
 

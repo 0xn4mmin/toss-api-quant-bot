@@ -282,6 +282,7 @@ def _grid_signal_builder(
     if strategy.sizing.vol_target_annual is not None:
         vt = (strategy.sizing.vol_target_annual,
               strategy.sizing.vol_lookback_days, tdpy)
+    vband = strategy.sizing.vol_scalar_band
     slots_declared = {d.slot for d in strategy.signals}
     regime_decl = next(
         (d for d in strategy.signals if d.slot == "regime_filter"), None
@@ -297,6 +298,7 @@ def _grid_signal_builder(
                 }
                 fn = build_dual_momentum_signal(
                     slot_params, cap=cap, vol_target_spec=vt,
+                    vol_scalar_band=vband,
                 )
                 return fn(view, None)
             slot_params = {
@@ -318,7 +320,7 @@ def _grid_signal_builder(
             fn = build_us_core_signal(
                 slot_params, cap=cap,
                 index_symbol=index_symbol, vix_symbol=vix_symbol,
-                vol_target_spec=vt,
+                vol_target_spec=vt, vol_scalar_band=vband,
             )
             return fn(view, None)
         return signal_fn

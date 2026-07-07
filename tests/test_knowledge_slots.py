@@ -166,3 +166,28 @@ def test_momentum_core_v2_file_parses():
     assert (s.meta.id, s.meta.version) == ("momentum-core", 2)
     assert s.sizing.vol_target_annual == 0.12 and s.sizing.vol_lookback_days == 60
     assert s.universe["us_core"].max_symbols == 40
+
+
+def test_vol_scalar_band_suppresses_churn():
+    """스칼라 변경 밴드 — 작은 변동은 직전 노출 유지 (v3 회전율 5.0x 교훈)."""
+    from quantbot.strategy.slots.pipeline import _ScalarSmoother
+
+    s = _ScalarSmoother(band=0.10)
+    assert s.smooth(0.80) == 0.80          # 최초 — 그대로
+    assert s.smooth(0.85) == 0.80          # 밴드 안 — 유지
+    assert s.smooth(0.74) == 0.80          # 밴드 안(0.06) — 유지
+    assert s.smooth(0.60) == 0.60          # 밴드 밖 — 갱신
+    assert s.smooth(0.65) == 0.60          # 새 기준점 대비 밴드 안
+    off = _ScalarSmoother(band=None)
+    assert off.smooth(0.5) == 0.5 and off.smooth(0.51) == 0.51  # 밴드 없음 = 통과
+
+
+def test_vol_scalar_band_schema():
+    d = _valid_dict()
+    d["sizing"].update(vol_scalar_band=0.1)   # vol_target 없이 — 거부
+    with pytest.raises(StrategySchemaError, match="vol_scalar_band"):
+        parse_strategy(d)
+    d2 = _valid_dict()
+    d2["sizing"].update(vol_target_annual=0.12, vol_lookback_days=60,
+                        vol_scalar_band=0.1)
+    assert parse_strategy(d2).sizing.vol_scalar_band == 0.1

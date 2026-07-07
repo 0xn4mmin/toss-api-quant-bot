@@ -40,6 +40,7 @@ sizing:
   order_unit: fractional
   vol_target_annual: 0.10      # v1.4 오버레이 — 연 10% 목표, 확정값 (OF-03)
   vol_lookback_days: 60
+  vol_scalar_band: 0.10   # 스칼라 변경 밴드 — 회전율 억제 (v3 실측 교훈, 확정값)
 cadence:
   rebalance: weekly
   execution_window:
