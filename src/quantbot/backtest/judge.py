@@ -143,6 +143,9 @@ def evaluate_oos(
         e for e in registry.events(EVENT_OOS_OPENED)
         if e["payload"].get("strategy_id") == strategy_id
     ]
+    prior_artifacts = registry.artifacts(
+        strategy_id=strategy_id, kind=ARTIFACT_JUDGEMENT
+    )
     reproduction = False
     if opened:
         if opened[0]["payload"].get("run_sha") != run_sha:
@@ -152,7 +155,9 @@ def evaluate_oos(
                 "다른 입력으로의 재평가는 거부된다 — 재탐색은 새 전략 id로 "
                 "사전등록부터 다시 (BT-02, IMPL-05)."
             )
-        reproduction = True  # 동일 해시 — 결과 재계산·검산만 허용
+        # 개봉 기록은 있으나 판정 아티팩트가 없으면(직전 실행이 도중 죽음)
+        # 이번이 최초 판정이다 — 재현 취급하면 생명주기 전이가 영영 생략된다
+        reproduction = bool(prior_artifacts)
     else:
         registry.append_event(
             EVENT_OOS_OPENED,
@@ -271,7 +276,7 @@ def evaluate_oos(
     reproduction_match: bool | None = None
     if reproduction:
         # 검산 — 최초 판정과 flags·metrics·선택 파라미터가 일치해야 한다
-        first = registry.artifacts(strategy_id=strategy_id, kind=ARTIFACT_JUDGEMENT)[0]
+        first = prior_artifacts[0]  # 최초 판정 아티팩트와 검산 (이번 실행분 제외)
         keys = ("flags", "metrics", "selected_params")
         reproduction_match = all(
             prereg.canonical_json(first["payload"][k]) == prereg.canonical_json(payload[k])

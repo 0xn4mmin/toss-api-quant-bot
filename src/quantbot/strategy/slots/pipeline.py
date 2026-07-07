@@ -80,6 +80,11 @@ def build_us_core_signal(
         p = dict(params)
         if p_override:
             p.update(p_override)
+        # 레짐 판정 불가(지수 이력 < ma_len) = 노출 안 함 — 워크포워드 워밍업의
+        # 정상 조건이며, 측정 못 한 위험은 지지 않는다 (fail-closed)
+        if index_symbol is not None and vix_symbol is not None:
+            if len(view.close(index_symbol)) < int(p["ma_len"]):
+                return {}
         symbols = [s for s in view.symbols if s not in excluded]
         closes = {s: view.close(s) for s in symbols}
         mom = trend_score.momentum(closes, int(p["lookback"]), int(p["skip"]))

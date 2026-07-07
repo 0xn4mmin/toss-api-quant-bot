@@ -138,3 +138,58 @@ def test_import_vix_merges_and_aligns_grid(tmp_path, capsys):
     store = MarketDataStore.from_csv(out)      # 완전 격자 정합 통과
     assert store.symbols == ("AAPL", "SPY", "VIX")
     assert store.close_at("VIX", 1) == pytest.approx(16.2)
+
+
+def test_regime_warmup_holds_cash_instead_of_crashing():
+    """워크포워드 워밍업: 지수 이력 < ma_len 이면 예외가 아니라 현금 (2026-07-07 실측)."""
+    import numpy as np
+    from quantbot.strategy.slots.pipeline import build_us_core_signal
+
+    closes = {s: 100.0 * np.cumprod(1 + np.full(71, 0.001))
+              for s in ("AAA", "BBB", "SPX", "VIX")}
+
+    class View:
+        symbols = tuple(sorted(closes))
+        def close(self, s):
+            return closes[s]
+
+    fn = build_us_core_signal(
+        {"lookback": 65, "skip": 5, "abs_filter": True, "n": 2, "exit_buffer": 1.5,
+         "ma_len": 100, "vix_threshold": 25.0, "e_min": 0.2, "caution_exposure": 0.5},
+        cap=0.99, index_symbol="SPX", vix_symbol="VIX",
+    )
+    assert fn(View(), None) == {}                  # 판정 불가 = 노출 안 함
+
+    long_closes = {s: np.concatenate([c, c[-1] * np.cumprod(1 + np.full(60, 0.001))])
+                   for s, c in closes.items()}
+
+    class LongView(View):
+        def close(self, s):
+            return long_closes[s]
+
+    assert fn(LongView(), None) != {}              # 이력이 차면 정상 판정
+
+
+def test_crashed_first_run_does_not_become_reproduction(registry, uptrend_store):
+    """oos_opened 기록 후 죽은 실행 — 재실행이 '재현'으로 오인돼 생명주기 전이가
+    생략되면 안 된다 (2026-07-07 실측에서 발견)."""
+    from quantbot.backtest import judge, prereg, walkforward
+    from conftest import LOOSE_GATES, LOW_COSTS, SMALL_METH, momentum_top1
+
+    grid = {"lookback": [3, 5]}
+    rng = (uptrend_store.date(0), uptrend_store.date(len(uptrend_store) - 1))
+    prereg.seal(registry, "crashy", grid, rng, walkforward.folds_spec(SMALL_METH))
+
+    def exploding(view, params):
+        raise RuntimeError("simulated crash mid-run")
+
+    with pytest.raises(RuntimeError):
+        judge.evaluate_oos(registry, uptrend_store, "crashy", grid, rng,
+                           exploding, LOW_COSTS, SMALL_METH, LOOSE_GATES)
+    assert len(registry.events(judge.EVENT_OOS_OPENED)) == 1  # 개봉은 기록됨
+
+    res = judge.evaluate_oos(registry, uptrend_store, "crashy", grid, rng,
+                             momentum_top1, LOW_COSTS, SMALL_METH, LOOSE_GATES)
+    assert res.reproduction is False               # 최초 판정으로 취급
+    assert res.transition in ("paper", "rejected")  # 전이가 생략되지 않는다
+    assert len(registry.transitions("crashy")) == 1
