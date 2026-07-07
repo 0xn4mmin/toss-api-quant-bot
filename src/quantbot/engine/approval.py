@@ -14,6 +14,7 @@ from quantbot.engine import portfolio
 from quantbot.engine.invariants import (
     Invariants,
     VERDICT_ELIGIBLE,
+    broad_etf_cap_eligible,
     leverage_verdict,
 )
 from quantbot.engine.registry import Registry
@@ -32,13 +33,17 @@ def static_invariant_check(
     universe_symbols: Mapping[str, list[str]],
     whitelist: Mapping[str, set[str]] | None = None,
     stock_master: Mapping[str, tuple[str, str | None]] | None = None,
+    broad_etf_symbols: frozenset[str] = frozenset(),
 ) -> list[str]:
     """위반 목록을 반환한다 — 빈 리스트 = 통과. 검사는 전부 AND (GATE-01).
 
     universe_symbols: sleeve → 실제 심볼 목록 (유니버스 파일/스크리너 결과).
     whitelist: sleeve → 허용 심볼 (INV-03). None이면 이 항목은 '검증 불가' 위반.
-    stock_master: symbol → (securityType, leverageFactor) — INV-11 입력.
+    stock_master: symbol → (securityType, leverageFactor) — INV-11/01a 입력.
         exclude_leveraged_etf=true인데 None이면 '검증 불가' 위반 (fail-closed).
+    broad_etf_symbols (INV-01a): 사람 큐레이션 분산형 ETF 목록. sleeve 전 종목이
+        이 목록에 있고 기계 검증(ETF 계열 ∧ leverageFactor=1.0)을 통과할 때만
+        해당 sleeve에 ETF 캡을 적용한다 — 혼합·미검증은 기존 12% (좁은 예외).
     """
     violations: list[str] = []
 
@@ -49,17 +54,43 @@ def static_invariant_check(
             f"하한 {inv.rebalance.min_interval_days}일"
         )
 
-    # INV-01 — 최악 케이스 종목 비중 = sleeve_alloc / n(진입 보유 수) ≤ 캡
-    cap = inv.position.max_weight_pct / PCT
+    # INV-01/01a — 최악 케이스 종목 비중 = sleeve_alloc / n(진입 보유 수) ≤ 캡
+    cap_stock = inv.position.max_weight_pct / PCT
+    cap_etf = inv.position.max_weight_pct_broad_etf / PCT
     n_entry = int(strategy.entry_exit.entry.params.get("n", 0))
     if n_entry < 1:
         violations.append("INV-01: entry.params.n ≥ 1 필요")
     else:
         for sleeve, alloc in strategy.sizing.sleeves.items():
+            symbols = list(universe_symbols.get(sleeve, []))
+            etf_sleeve = bool(symbols) and broad_etf_symbols and (
+                set(symbols) <= set(broad_etf_symbols)
+            )
+            if etf_sleeve:
+                # INV-01a 이중 검증 — 기계 검증 실패는 캡 강등이 아니라 위반
+                # (50%로 사이징된 전략이 12%로 잘리면 다른 전략이 되므로)
+                if stock_master is None:
+                    violations.append(
+                        f"INV-01a: {sleeve} 종목 마스터 미제공 — 검증 불가 (fail-closed)"
+                    )
+                    etf_sleeve = False
+                else:
+                    for s in sorted(set(symbols)):
+                        sec_type, factor = stock_master.get(s, ("", None))
+                        if not broad_etf_cap_eligible(
+                            s, broad_etf_symbols, sec_type, factor
+                        ):
+                            violations.append(
+                                f"INV-01a: {s} 기계 검증 실패 "
+                                f"(securityType={sec_type!r}, leverageFactor={factor!r})"
+                            )
+                            etf_sleeve = False
+            cap = cap_etf if etf_sleeve else cap_stock
+            inv_id = "INV-01a" if etf_sleeve else "INV-01"
             worst = alloc / n_entry
             if worst > cap + 1e-12:
                 violations.append(
-                    f"INV-01: {sleeve} 최악 비중 {worst:.4f} > 캡 {cap:.4f} "
+                    f"{inv_id}: {sleeve} 최악 비중 {worst:.4f} > 캡 {cap:.4f} "
                     f"(alloc {alloc} / n {n_entry})"
                 )
 

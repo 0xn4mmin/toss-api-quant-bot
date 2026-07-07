@@ -193,3 +193,93 @@ def test_crashed_first_run_does_not_become_reproduction(registry, uptrend_store)
     assert res.reproduction is False               # 최초 판정으로 취급
     assert res.transition in ("paper", "rejected")  # 전이가 생략되지 않는다
     assert len(registry.transitions("crashy")) == 1
+
+
+# ── INV-01a (2026-07-07 승인) — 분산형 ETF 캡 예외의 이중 검증 ──────────
+
+
+def test_broad_etf_cap_eligible_requires_both_gates():
+    from quantbot.engine.invariants import broad_etf_cap_eligible
+
+    broad = frozenset({"SPY", "TLT"})
+    assert broad_etf_cap_eligible("SPY", broad, "FOREIGN_ETF", "1.0")
+    assert not broad_etf_cap_eligible("QQQ", broad, "FOREIGN_ETF", "1.0")   # 목록 밖
+    assert not broad_etf_cap_eligible("SPY", broad, "FOREIGN_ETF", "3.0")   # 레버리지
+    assert not broad_etf_cap_eligible("SPY", broad, "FOREIGN_ETF", None)    # 판정 불가
+    assert not broad_etf_cap_eligible("SPY", broad, "FOREIGN_STOCK", "1.0") # 비ETF
+
+
+def test_caps_applies_etf_cap_only_to_verified_set():
+    """검증된 ETF는 50%까지, 목록 밖 개별 주식은 여전히 12%."""
+    state = caps.CapsState()
+    state.start_day(5_000_000.0)
+    intents = [
+        caps.OrderIntent("SPY", "BUY", amount_krw=1_000_000),   # 20% — ETF 캡 안
+        caps.OrderIntent("AAPL", "BUY", amount_krw=1_000_000),  # 20% — INV-01 위반
+    ]
+    d = caps.check(intents, INV, state, equity_krw=5_000_000.0,
+                   cash_krw=5_000_000.0, position_value_krw={},
+                   broad_etf_symbols=frozenset({"SPY"}))
+    assert {c.symbol for c in d.cleared} == {"SPY"}
+    assert "INV-01" in d.rejected[0][1] and d.rejected[0][0].symbol == "AAPL"
+
+
+def test_static_check_etf_sleeve_dual_verification():
+    from quantbot.engine.approval import static_invariant_check
+    from quantbot.strategy.schema import parse_strategy
+    from test_strategy import _valid_dict
+
+    d = _valid_dict()
+    d["entry_exit"]["entry"]["params"]["n"] = 2   # alloc 1.0 / 2 = 50%
+    strategy = parse_strategy(d)
+    broad = frozenset({"SPY", "TLT"})
+    master_ok = {"SPY": ("FOREIGN_ETF", "1.0"), "TLT": ("FOREIGN_ETF", "1.0")}
+    ok = static_invariant_check(
+        strategy, INV, {"us_core": ["SPY", "TLT"]},
+        whitelist={"us_core": {"SPY", "TLT"}},
+        stock_master=master_ok, broad_etf_symbols=broad,
+    )
+    assert ok == []                                # 50% ≤ ETF 캡 50%
+    # 기계 검증 실패(레버리지 값) → 캡 강등이 아니라 위반
+    master_bad = {"SPY": ("FOREIGN_ETF", "1.0"), "TLT": ("FOREIGN_ETF", "3.0")}
+    bad = static_invariant_check(
+        strategy, INV, {"us_core": ["SPY", "TLT"]},
+        whitelist={"us_core": {"SPY", "TLT"}},
+        stock_master=master_bad, broad_etf_symbols=broad,
+    )
+    assert any("INV-01a: TLT 기계 검증 실패" in v for v in bad)
+    assert any("최악 비중 0.5000 > 캡 0.1200" in v for v in bad)  # 12%로 재판정
+    # 혼합 sleeve(주식 포함)는 예외 없음 — 12% 적용
+    mixed = static_invariant_check(
+        strategy, INV, {"us_core": ["SPY", "AAPL"]},
+        whitelist={"us_core": {"SPY", "AAPL"}},
+        stock_master={**master_ok, "AAPL": ("FOREIGN_STOCK", None)},
+        broad_etf_symbols=broad,
+    )
+    assert any("INV-01:" in v and "0.5000" in v for v in mixed)
+
+
+def test_effective_cap_and_dual_momentum_excludes_vix():
+    import numpy as np
+    from quantbot.cli import effective_cap
+    from quantbot.engine.invariants import load_invariants
+    from quantbot.strategy.slots.pipeline import build_dual_momentum_signal
+
+    inv = load_invariants()
+    broad = {"SPY", "EFA", "TLT", "GLD", "IEF"}
+    assert effective_cap(inv, {"SPY", "TLT"}, broad) == 0.50
+    assert effective_cap(inv, {"SPY", "AAPL"}, broad) == 0.12   # 혼합 — 예외 없음
+    assert effective_cap(inv, set(), broad) == 0.12
+
+    closes = {s: 100.0 * np.cumprod(1 + g * np.ones(60))
+              for s, g in {"SPY": 0.002, "TLT": 0.001, "VIX": 0.05}.items()}
+
+    class View:
+        symbols = tuple(sorted(closes))
+        def close(self, s):
+            return closes[s]
+
+    fn = build_dual_momentum_signal({"lookback": 30, "top_n": 1}, cap=0.50,
+                                    excluded=frozenset({"VIX"}))
+    w = fn(View(), None)
+    assert "VIX" not in w and w == {"SPY": 0.50}  # VIX(최고 상승)가 자산으로 안 뽑힘

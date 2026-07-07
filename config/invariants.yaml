@@ -9,13 +9,18 @@
 version: 1
 
 position:
-  max_weight_pct: 12          # INV-01 — 종목당 비중 상한
+  max_weight_pct: 12          # INV-01 — 종목당 비중 상한 (개별 주식)
+  # INV-01a (2026-07-07 확정, ARCH v1.2) — 분산형 지수 ETF 예외:
+  # universe/us_etf.yaml(사람 큐레이션) ∧ 기계 검증(ETF 계열 ∧ leverageFactor=1.0)
+  # 를 모두 통과한 종목만. 미검증·비목록은 12% 그대로.
+  max_weight_pct_broad_etf: 50
   max_leverage: 0             # INV-02 — 레버리지 금지
 
 universe:
   whitelist_only: true        # INV-03 — 화이트리스트 유니버스만
   kr_path: "universe/kr.yaml"
   us_path: "universe/us.yaml"
+  broad_etf_path: "universe/us_etf.yaml"   # INV-01a 대상 목록
   # INV-11 (2026-07-06 확정) — 레버리지·인버스 ETF/ETN 금지.
   # 주 방어: 공식 API 종목 마스터 leverageFactor 기계 검증(게이트, LC-G1/GATE-03).
   #   ETF/ETN 계열은 1.0만 허용, null(데이터 누락)은 "판정 불가" = 자동 승인 제외.

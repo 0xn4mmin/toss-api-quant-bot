@@ -119,18 +119,24 @@ def check(
     equity_krw: float,
     cash_krw: float,
     position_value_krw: Mapping[str, float],
+    broad_etf_symbols: frozenset[str] = frozenset(),
 ) -> CapsDecision:
     """주문 의도 목록을 검사해 통과분만 ClearedIntent로 봉인한다 (GATE-01).
 
     거부는 완화 없는 거부다 — 통과분과 거부분이 함께 반환되고, 거부 사유는
     게이트가 registry·에스컬레이션으로 올린다.
+
+    broad_etf_symbols (INV-01a): 호출자(엔진)가 **이중 검증을 이미 통과시킨**
+    분산형 ETF 집합 — 사람 큐레이션 목록 ∧ 기계 검증(invariants.
+    broad_etf_cap_eligible). 검증 없이 심볼을 넣는 것은 호출자의 계약 위반이다.
     """
     cleared: list[ClearedIntent] = []
     rejected: list[tuple[OrderIntent, str]] = []
     if equity_krw <= 0:
         raise CapsError(f"계좌 평가액이 비정상이다: {equity_krw}")
 
-    cap = inv.position.max_weight_pct / PCT
+    cap_stock = inv.position.max_weight_pct / PCT
+    cap_etf = inv.position.max_weight_pct_broad_etf / PCT
     budget_cash = cash_krw
     count = state.daily_order_count
     # 같은 배치에서 이미 통과한 매수 명목가 — 종목 쪼개기로 캡을 우회 못 하게
@@ -164,15 +170,17 @@ def check(
                     intent, f"INV-02: 현금 {budget_cash:.0f} < 매수 {notional:.0f}",
                 ))
                 continue
+            cap = cap_etf if intent.symbol in broad_etf_symbols else cap_stock
             weight_after = (
                 position_value_krw.get(intent.symbol, 0.0)
                 + pending_buy_krw.get(intent.symbol, 0.0)
                 + notional
             ) / equity_krw
             if weight_after > cap + 1e-12:
+                inv_id = "INV-01a" if intent.symbol in broad_etf_symbols else "INV-01"
                 rejected.append((
                     intent,
-                    f"INV-01: {intent.symbol} 매수 후 비중 {weight_after:.4f} > "
+                    f"{inv_id}: {intent.symbol} 매수 후 비중 {weight_after:.4f} > "
                     f"캡 {cap:.4f} — 정상 경로라면 전략 계층 버그 (§S5)",
                 ))
                 continue

@@ -231,16 +231,16 @@ id 필요). 지금이 그리드를 바꿀 마지막 기회다.
 2. ~~자산군 듀얼 모멘텀~~ ✅ 슬롯·전략 파일(draft)·그리드 구현됨. 판정 절차:
    ```
    $ uv run quantbot fetch-candles --symbols SPY,EFA,TLT,GLD,IEF \
-       --days 1800 --out var/data/assets_raw.csv
+       --days 2400 --out var/data/assets_raw.csv
    $ uv run quantbot import-vix --data var/data/assets_raw.csv \
-       --cboe-csv var/data/VIX_History.csv --out var/data/assets.csv
+       --cboe-csv var/data/VIX_History.csv --out var/data/assets.csv \
+       --require-start 2017-02-01
    $ uv run quantbot backtest --strategy strategies/dual-momentum.v1.yaml \
        --grid config/grids/dual-momentum.yaml --data var/data/assets.csv \
-       --allow-no-regime
+       --vix-symbol VIX
    ```
-   (dual momentum은 자체 절대 필터가 레짐 역할 — --allow-no-regime이 맞다)
-   ⚠ **실행 전 12번의 INV-01 ETF 캡 결정 필수** — 미결정 상태로 돌리면 실효
-   노출이 top_n×12%로 잘려 판정이 왜곡된다
+   (--vix-symbol은 데이터의 VIX 열을 자산 후보에서 제외하는 용도.
+    출력 첫 줄이 "종목당 캡 50% (INV-01a 분산형 ETF)"인지 확인)
 3. KR flows sleeve (표본 3년 도달 시 — 이 봇의 고유 엣지)
 4. 멀티 전략 + 규칙 기반 메타 배분
 - 심어진 지식의 전체 대장: `docs/INVESTMENT_KNOWLEDGE.md` (근거·코드 위치·
@@ -248,9 +248,8 @@ id 필요). 지금이 그리드를 바꿀 마지막 기회다.
 
 ## 12. 미확정 값·잔여 결정 (시기 도래 시)
 
-- [ ] **INV-01 광범위 ETF 캡 결정** (11-2 전제): 종목당 12% 캡은 개별 주식용 —
-  SPY·TLT 같은 분산형 ETF에 예외/상향(예: 지수 ETF 50%)을 둘지. invariants.yaml
-  (ARCH §4) 개정 사안이라 소유자만 결정 가능. 결정하면 세션이 검증 로직과 함께 반영
+- [x] ~~INV-01 광범위 ETF 캡 결정~~ ✅ 2026-07-07 승인·구현: INV-01a — 분산형
+  지수 ETF(universe/us_etf.yaml 큐레이션 ∧ 기계 검증 leverageFactor=1.0) 캡 50%
 - [ ] GLD·TLT 등 ETF의 leverageFactor 실측 확인 (`api-verify` 후 stocks 조회) —
   null이면 INV-11 판정 불가로 자동 승인에서 빠진다 (1배 ETF는 "1.0"이어야 정상)
 - [ ] LC-G3 괴리 허용범위 (8-1 — 페이퍼 시작 전 필수)

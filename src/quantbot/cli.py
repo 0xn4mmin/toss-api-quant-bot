@@ -262,6 +262,17 @@ def cmd_import_vix(args: argparse.Namespace) -> int:
     return 0
 
 
+def effective_cap(inv, trade_symbols: set[str], broad_etf_symbols: set[str]) -> float:
+    """INV-01/01a — 거래 대상 전 종목이 분산형 ETF 목록 안일 때만 ETF 캡.
+
+    백테스트는 사람 큐레이션 목록 기준(오프라인) — 기계 검증(leverageFactor)은
+    승인 게이트(approval)가 API 종목 마스터로 이중 수행한다.
+    """
+    if trade_symbols and broad_etf_symbols and trade_symbols <= broad_etf_symbols:
+        return inv.position.max_weight_pct_broad_etf / 100.0
+    return inv.position.max_weight_pct / 100.0
+
+
 def _grid_signal_builder(
     strategy, tdpw: int, tdpy: int,
     index_symbol: str | None = None,
@@ -299,6 +310,9 @@ def _grid_signal_builder(
                 fn = build_dual_momentum_signal(
                     slot_params, cap=cap, vol_target_spec=vt,
                     vol_scalar_band=vband,
+                    excluded=frozenset(
+                        s for s in (index_symbol, vix_symbol) if s
+                    ),
                 )
                 return fn(view, None)
             slot_params = {
@@ -348,7 +362,6 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     gates = load_gates(args.gates)
     cost_model = CostModel.from_config(costs_cfg)
     inv = load_invariants()
-    cap = inv.position.max_weight_pct / 100.0
     tdpw = int(yaml_mod.load_file(args.config)["methodology"].get(
         "trading_days_per_week", 5))
     # 레짐 필터 fail-closed: 전략이 선언했는데 입력이 없으면 데이터를 열기 전에 거부
@@ -396,6 +409,14 @@ def cmd_backtest(args: argparse.Namespace) -> int:
             "(그 경우 G2는 확정 불합격)"
         )
 
+    broad_etf: set[str] = set()
+    etf_list = yaml_mod.load_file(inv.universe.broad_etf_path).get("symbols")
+    if isinstance(etf_list, list):
+        broad_etf = {str(s) for s in etf_list}
+    trade_symbols = set(store.symbols) - {s for s in (index_symbol, vix_symbol) if s}
+    cap = effective_cap(inv, trade_symbols, broad_etf)
+    print(f"종목당 캡 {cap:.0%} ({'INV-01a 분산형 ETF' if cap > inv.position.max_weight_pct / 100.0 else 'INV-01'})"
+          " — 기계 검증(leverageFactor)은 승인 게이트가 이중 수행")
     signal_fn = _grid_signal_builder(
         strategy, tdpw, meth.trading_days_per_year, index_symbol, vix_symbol
     )(cap)

@@ -145,6 +145,7 @@ def build_dual_momentum_signal(
     cap: float,
     vol_target_spec: VolTarget | None = None,
     vol_scalar_band: float | None = None,
+    excluded: frozenset[str] = frozenset(),  # 데이터 열 중 비자산(VIX 등) 제외
 ):
     """자산군 듀얼 모멘텀 시그널 (STRAT v1.4) — Phase 1 러너 SignalFn 호환.
 
@@ -159,7 +160,7 @@ def build_dual_momentum_signal(
         p = dict(params)
         if p_override:
             p.update(p_override)
-        closes = {s: view.close(s) for s in view.symbols}
+        closes = {s: view.close(s) for s in view.symbols if s not in excluded}
         top_n = int(p["top_n"])
         selection = dual_momentum.dual_momentum_select(
             closes, lookback=int(p["lookback"]), top_n=top_n,

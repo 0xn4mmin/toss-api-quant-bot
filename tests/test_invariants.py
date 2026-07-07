@@ -12,11 +12,13 @@ VALID = """\
 version: 1
 position:
   max_weight_pct: 12
+  max_weight_pct_broad_etf: 50
   max_leverage: 0
 universe:
   whitelist_only: true
   kr_path: "universe/kr.yaml"
   us_path: "universe/us.yaml"
+  broad_etf_path: "universe/us_etf.yaml"
   exclude_leveraged_etf: true
 backtest:
   max_mdd_pct: 15

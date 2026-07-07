@@ -24,8 +24,9 @@ class InvariantsError(ValueError):
 
 @dataclass(frozen=True)
 class PositionLimits:
-    max_weight_pct: float  # INV-01
-    max_leverage: float    # INV-02
+    max_weight_pct: float            # INV-01 (개별 주식)
+    max_weight_pct_broad_etf: float  # INV-01a (분산형 지수 ETF — 이중 검증 통과 시)
+    max_leverage: float              # INV-02
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,7 @@ class UniversePolicy:
     whitelist_only: bool          # INV-03
     kr_path: str
     us_path: str
+    broad_etf_path: str           # INV-01a 대상 목록 (사람 큐레이션)
     exclude_leveraged_etf: bool   # INV-11 (ARCH v1.1)
 
 
@@ -151,6 +153,25 @@ def leverage_verdict(security_type: str, leverage_factor: str | None) -> str:
     return VERDICT_REJECTED
 
 
+def broad_etf_cap_eligible(
+    symbol: str,
+    broad_etf_symbols: frozenset[str] | set[str],
+    security_type: str,
+    leverage_factor: str | None,
+) -> bool:
+    """INV-01a (ARCH v1.2) — 분산형 ETF 캡 예외의 이중 검증.
+
+    ① 사람 큐레이션 목록(universe/us_etf.yaml)에 있고
+    ② 기계 검증: securityType이 ETF 계열이며 leverageFactor가 정확히 1.0.
+    하나라도 미충족이면 기존 INV-01(12%) 적용 — 예외는 좁게, 기본은 엄격하게.
+    """
+    return (
+        symbol in broad_etf_symbols
+        and security_type in ETP_SECURITY_TYPES
+        and leverage_verdict(security_type, leverage_factor) == VERDICT_ELIGIBLE
+    )
+
+
 def load_invariants(path: str | Path | None = None) -> Invariants:
     """invariants 파일을 읽어 frozen dataclass로 반환한다.
 
@@ -181,12 +202,16 @@ def load_invariants(path: str | Path | None = None) -> Invariants:
         version=_SUPPORTED_VERSION,
         position=PositionLimits(
             max_weight_pct=_num(pos, "position", "max_weight_pct", lo=0.0, hi=100.0),
+            max_weight_pct_broad_etf=_num(
+                pos, "position", "max_weight_pct_broad_etf", lo=0.0, hi=100.0
+            ),
             max_leverage=_num(pos, "position", "max_leverage", lo=0.0, hi=0.0),  # INV-02: 0만 유효
         ),
         universe=UniversePolicy(
             whitelist_only=_boolval(uni, "universe", "whitelist_only"),
             kr_path=_strval(uni, "universe", "kr_path"),
             us_path=_strval(uni, "universe", "us_path"),
+            broad_etf_path=_strval(uni, "universe", "broad_etf_path"),
             exclude_leveraged_etf=_boolval(uni, "universe", "exclude_leveraged_etf"),
         ),
         backtest=BacktestLimits(
