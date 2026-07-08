@@ -453,9 +453,10 @@ def cmd_backtest(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    """페이퍼 운영 루프 — 텔레그램 폴링 + 하트비트 + 주간 리밸런싱. (미검증:
-    실 키·봇 토큰 배치 후 첫 감독 실행은 TODO.md 참조. live_trading은 Phase 7 전
-    까지 무조건 페이퍼로 강제된다.)"""
+    """페이퍼 운영 루프 — 텔레그램 폴링 + 하트비트 + (--strategy 시) 주간
+    페이퍼 사이클(연구용 순방향 검증, 2026-07-08 결정). live_trading은 Phase 7
+    전까지 무조건 페이퍼로 강제되고, 자동 승격은 LC-G2/INV-08이 영구 차단한다.
+    (미검증 조립 코드 — 첫 실행은 감독하에, TODO.md 참조)"""
     from quantbot.adapter.fills import CostModel
     from quantbot.adapter.official import md
     from quantbot.backtest.config import load_methodology
@@ -526,12 +527,124 @@ def cmd_run(args: argparse.Namespace) -> int:
         },
         tokens=TokenStore(ttl_s=float(tg_cfg.get("confirm_ttl_s", 300))),
     )
+    # ── 연구용 페이퍼 사이클 (--strategy) ─────────────────────────────
+    paper_ctx = None
+    if args.strategy:
+        from datetime import datetime, timezone
+
+        from quantbot import _yaml as yaml_mod
+        from quantbot.adapter.official.contracts import SECURITY_TYPES_ETP
+        from quantbot.backtest.config import load_methodology
+        from quantbot.engine import paperops
+        from quantbot.engine.invariants import broad_etf_cap_eligible
+        from quantbot.engine.scheduler import ExecutionWindow, is_rebalance_due, week_key
+        from quantbot.interface.reports import morning_report
+        from quantbot.strategy.loader import load_strategy
+
+        strategy = load_strategy(args.strategy)
+        sid = f"{strategy.meta.id}.v{strategy.meta.version}"
+        selected = paperops.load_selected_params(registry, sid)
+        meth, _ = load_methodology("config/backtest.yaml")
+        tdpw = int(yaml_mod.load_file("config/backtest.yaml")["methodology"].get(
+            "trading_days_per_week", 5))
+        portfolio = paperops.start_or_resume_session(
+            registry, sid, float(args.paper_cash))
+        # INV-01a 이중 검증 — 기계 검증을 여기(런타임)에서 수행
+        etf_list = yaml_mod.load_file(inv.universe.broad_etf_path).get("symbols") or []
+        universe = [str(s) for s in etf_list]
+        infos = {s.symbol: s for s in md.stocks(client, universe)}
+        verified = frozenset(
+            s for s in universe
+            if s in infos and broad_etf_cap_eligible(
+                s, frozenset(universe), infos[s].securityType,
+                infos[s].leverageFactor,
+            )
+        )
+        dropped = sorted(set(universe) - verified)
+        if dropped:
+            print(f"⚠ INV-01a 기계 검증 미통과 — ETF 캡 제외: {dropped}")
+        window = ExecutionWindow.parse(
+            strategy.cadence.execution_window.get("us", "23:00-00:30 KST"))
+        lookback_bars = max(
+            int(selected["lookback_wk"]) * tdpw
+            + int(selected.get("skip_wk", 0)) * tdpw,
+            strategy.sizing.vol_lookback_days or 0,
+        ) + tdpw  # 여유 1주
+        paper_ctx = dict(
+            strategy=strategy, sid=sid, selected=selected, meth=meth, tdpw=tdpw,
+            portfolio=portfolio, universe=universe, verified=verified,
+            window=window, lookback_bars=lookback_bars,
+        )
+        print(f"연구용 페이퍼 가동: {sid} · 파라미터 {selected} · "
+              f"NAV {portfolio.equity({}) if not portfolio.qty else '복원됨'}")
+
+    def run_paper_if_due() -> None:
+        if paper_ctx is None:
+            return
+        from datetime import datetime, timezone
+
+        from quantbot.engine import paperops
+        from quantbot.engine.scheduler import is_rebalance_due, week_key
+        from quantbot.interface.reports import morning_report
+
+        now = datetime.now(timezone.utc)
+        weeks = [
+            e["payload"].get("week_key")
+            for e in registry.events("paper_week_done")
+            if e["payload"].get("strategy_id") == paper_ctx["sid"]
+        ]
+        last_week = weeks[-1] if weeks else None
+        if not is_rebalance_due(now, paper_ctx["window"], last_week):
+            return
+        closes = {}
+        prices = {}
+        for s in paper_ctx["universe"]:
+            page = md.candles(client, s, "1d", paper_ctx["lookback_bars"])
+            import numpy as np
+
+            closes[s] = np.array([float(c.closePrice) for c in page.candles])
+            prices[s] = float(closes[s][-1])
+        outcome = paperops.run_paper_cycle(
+            registry=registry, inv=inv, caps_state=state, gate=gate,
+            strategy=paper_ctx["strategy"], strategy_id=paper_ctx["sid"],
+            portfolio=paper_ctx["portfolio"], closes=closes, prices_krw=prices,
+            broad_etf_symbols=paper_ctx["verified"],
+            selected_params=paper_ctx["selected"],
+            trading_days_per_week=paper_ctx["tdpw"],
+            trading_days_per_year=paper_ctx["meth"].trading_days_per_year,
+            now_iso=now.isoformat(),
+            month_key=now.astimezone(paper_ctx["window"].tz).strftime("%Y-%m"),
+        )
+        # week_key 기록을 위해 마지막 사이클 이벤트에 주차를 덧붙일 수 없으므로
+        # (append-only) — run_paper_cycle payload에 이미 month_key가 있고,
+        # 주차 중복 방지는 아래 이벤트로 남긴다
+        registry.append_event("paper_week_done", "info", {
+            "strategy_id": paper_ctx["sid"],
+            "week_key": week_key(now, paper_ctx["window"]),
+        })
+        report = morning_report(
+            date=now.date().isoformat(), strategy_id=paper_ctx["sid"],
+            lifecycle_state="research-paper", exposure=sum(outcome.targets.values()),
+            signal_notes=[
+                f"선택 {outcome.selection} · vol 스칼라 {outcome.scalar:.2f}",
+                f"체결 {len(outcome.cycle.fills)}건 · 거부 {len(outcome.cycle.rejected)}건",
+            ],
+            fills=list(outcome.cycle.fills),
+            costs_krw=sum(f.get("commission", 0) + f.get("tax", 0)
+                          for f in outcome.cycle.fills),
+            pnl_day_krw=0.0, equity_krw=outcome.nav_krw,
+            holds=["fail-safe hold"] if state.hold else [],
+            unverified=True,  # rejected 전략의 연구 가동 — 표기 의무 (RISK-04)
+        )
+        tg.send_message(owner, report)
+
     print(f"페이퍼 운영 시작 — 명령 {sorted(ROUTING)} (중단: Ctrl-C)")
     offset = None
     try:
         while True:
             offset = poll_once(tg, router.handle, offset)
             watcher.check_heartbeat()
+            run_paper_if_due()
     except KeyboardInterrupt:
         registry.close()
         return 0
@@ -593,6 +706,9 @@ def main(argv: list[str] | None = None) -> int:
     p_run = sub.add_parser("run", help="페이퍼 운영 루프 (텔레그램 필요)")
     p_run.add_argument("--var-dir", default="var")
     p_run.add_argument("--paper-cash", default="5000000")
+    p_run.add_argument("--strategy", default="",
+                       help="연구용 페이퍼 사이클을 돌릴 전략 파일 "
+                            "(판정 아티팩트 필요 — 예: strategies/dual-momentum.v3.yaml)")
     p_run.set_defaults(fn=cmd_run)
 
     args = parser.parse_args(argv)

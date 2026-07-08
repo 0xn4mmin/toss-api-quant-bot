@@ -86,9 +86,16 @@ def run_rebalance_cycle(
     cash_krw: float,
     position_value_krw: Mapping[str, float],
     prices_krw: Mapping[str, float],
+    broad_etf_symbols: frozenset[str] = frozenset(),  # INV-01a — 이중 검증 완료 집합
 ) -> CycleResult:
-    """한 번의 리밸런싱 — 매도 먼저(현금 확보), 그다음 매수. 전 주문이 게이트 경유."""
+    """한 번의 리밸런싱 — 매도 먼저(현금 확보), 그다음 매수. 전 주문이 게이트 경유.
+
+    INV-10 주문 분할: 변화 금액이 1회 상한을 넘으면 상한 이하 조각으로 나눈다 —
+    상한의 목적(단일 주문 폭주·착오 캡)은 주문 단위 규제라 분할은 완화가 아니고,
+    조각 수는 INV-09(일일 횟수)가 자연 상한이다.
+    """
     orders = no_trade_band_orders(current_weights, target_weights, band)
+    max_per_order = inv.orders.per_order_max_amount_krw
     intents: list[caps_mod.OrderIntent] = []
     for symbol in sorted(orders):
         target_v = orders[symbol] * equity_krw
@@ -97,20 +104,36 @@ def run_rebalance_cycle(
         price = prices_krw.get(symbol)
         if price is None or price <= 0:
             raise ScheduleError(f"{symbol}: 시세 없음 — 사이클 중단 (fail-closed)")
-        if delta < 0:
-            intents.append(caps_mod.OrderIntent(
-                symbol, "SELL", quantity=-delta / price, est_price_krw=price,
-            ))
-        elif delta > 0:
-            intents.append(caps_mod.OrderIntent(
-                symbol, "BUY", amount_krw=delta, est_price_krw=price,
-            ))
+        amount = abs(delta)
+        if amount <= 0:
+            continue
+        n_chunks = max(int(-(-amount // max_per_order)), 1)  # ceil
+        per_chunk = amount / n_chunks
+        cm = gate.costs
+        for _ in range(n_chunks):
+            if delta < 0:
+                intents.append(caps_mod.OrderIntent(
+                    symbol, "SELL", quantity=per_chunk / price, est_price_krw=price,
+                ))
+            else:
+                # 수수료 여유 선차감 — 조각 총비용(체결+수수료)이 조각 예산을
+                # 넘지 않게 (레버리지 0의 현금 산수, 시뮬과 같은 비용 모델)
+                buy_amount = max(
+                    (per_chunk - cm.min_commission_krw) / (1.0 + cm.commission_rate),
+                    0.0,
+                )
+                if buy_amount <= 0:
+                    continue
+                intents.append(caps_mod.OrderIntent(
+                    symbol, "BUY", amount_krw=buy_amount, est_price_krw=price,
+                ))
     intents.sort(key=lambda i: (i.side != "SELL", i.symbol))  # 매도 먼저
 
     decision = caps_mod.check(
         intents, inv, caps_state,
         equity_krw=equity_krw, cash_krw=cash_krw,
         position_value_krw=position_value_krw,
+        broad_etf_symbols=broad_etf_symbols,
     )
     fills = []
     for ci in decision.cleared:

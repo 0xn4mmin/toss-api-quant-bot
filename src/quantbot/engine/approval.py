@@ -146,13 +146,15 @@ def approve_switch(
     stock_master: Mapping[str, tuple[str, str | None]] | None,
     current_weights: Mapping[str, float],
     target_weights: Mapping[str, float],
+    broad_etf_symbols: frozenset[str] = frozenset(),
 ) -> ApprovalResult:
     """GATE-03 4단 — 전부 통과 = 자동 승인, 하나라도 실패 = 에스컬레이션."""
     reasons: list[str] = []
 
     # 1단: 스키마·정적 불변식
     reasons += static_invariant_check(
-        strategy, inv, universe_symbols, whitelist, stock_master
+        strategy, inv, universe_symbols, whitelist, stock_master,
+        broad_etf_symbols=broad_etf_symbols,
     )
 
     # 2단: 백테스트 게이트 — registry에 backtest→paper 전이(LC-G2)가 있어야 한다

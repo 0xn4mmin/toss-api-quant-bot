@@ -103,7 +103,7 @@ class Gate:
         if live_trading and official_client is None:
             raise GateError("live_trading에는 공식 클라이언트가 필요하다")
         self._registry = registry
-        self._costs = cost_model
+        self.costs = cost_model  # 사이징(수수료 여유 계산)이 같은 모델을 쓴다
         self._live = live_trading
         self._paper = paper
         self._quotes = quotes
@@ -129,8 +129,8 @@ class Gate:
         else:
             price = self._quotes(ci.symbol)
             exec_price = (
-                self._costs.buy_price(price) if ci.side == "BUY"
-                else self._costs.sell_price(price)
+                self.costs.buy_price(price) if ci.side == "BUY"
+                else self.costs.sell_price(price)
             )
             qty = (
                 ci.quantity if ci.quantity is not None
@@ -140,8 +140,8 @@ class Gate:
             receipt = PaperReceipt(
                 intent_hash=ci.intent_hash, symbol=ci.symbol, side=ci.side,
                 qty=qty, exec_price=exec_price,
-                commission=self._costs.commission(notional),
-                tax=self._costs.sell_tax(notional) if ci.side == "SELL" else 0.0,
+                commission=self.costs.commission(notional),
+                tax=self.costs.sell_tax(notional) if ci.side == "SELL" else 0.0,
                 expires_at=self._clock() + self._ttl,
                 receipt_hash=_paper_hash(
                     ci.intent_hash, ci.symbol, ci.side, qty, exec_price

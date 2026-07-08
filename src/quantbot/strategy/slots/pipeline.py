@@ -79,6 +79,10 @@ def cap_clip_redistribute(weights: dict[str, float], cap: float) -> dict[str, fl
             w[s] = w[s] + excess * (w[s] / under_total)
 
 
+# 공개 별칭 — 엔진(paperops)이 같은 산식을 쓴다 (백테스트·페이퍼 한 계보)
+basket_vol_scalar = _basket_vol_scalar
+
+
 def build_us_core_signal(
     params: Mapping[str, object],
     cap: float,
