@@ -151,3 +151,21 @@ def test_no_promotion_path_exists(registry):
     assert not result.auto_approved
     assert any("LC-G2" in r for r in result.reasons)
     assert any("INV-08" in r for r in result.reasons)
+
+def test_session_reset_opens_fresh_ledger(registry):
+    """2026-07-09 통화 버그 사후: 리셋 후엔 이전 체결이 재생되지 않는다 —
+    감사 기록은 registry에 남는다 (append-only 유지)."""
+    _seed_judgement(registry)
+    p1 = paperops.start_or_resume_session(registry, SID, 5_000_000.0)
+    closes = _closes(SPY=0.002, EFA=0.001, TLT=0.0015, GLD=0.0005, IEF=0.0003)
+    _run_cycle(registry, p1, closes, "2026-07")
+    assert p1.qty                                       # 오염 장부(가정)에 보유 존재
+    paperops.reset_session(registry, SID, 5_000_000.0, "통화 환산 버그 — 장부 폐기")
+    p2 = paperops.start_or_resume_session(registry, SID, 0.0)
+    assert p2.cash == pytest.approx(5_000_000.0)        # 새 장부
+    assert p2.qty == {}                                 # 이전 체결 재생 안 됨
+    assert len(registry.rows("orders")) > 0             # 감사 기록은 보존
+    # 리셋 후 새 체결은 정상 재생
+    _run_cycle(registry, p2, closes, "2026-08")
+    p3 = paperops.start_or_resume_session(registry, SID, 0.0)
+    assert p3.qty == pytest.approx(p2.qty) and p3.cash == pytest.approx(p2.cash)

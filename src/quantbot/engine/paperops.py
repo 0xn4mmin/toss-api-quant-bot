@@ -52,10 +52,26 @@ def load_selected_params(registry: Registry, strategy_id: str) -> dict:
     return dict(artifacts[0]["payload"]["selected_params"])
 
 
+def reset_session(
+    registry: Registry, strategy_id: str, initial_cash_krw: float, reason: str
+) -> None:
+    """새 세션 이벤트 append — 이전 장부는 감사 기록으로 남고 재생에서 제외된다.
+
+    registry는 append-only라 오염된 체결을 지울 수 없다(지워서도 안 된다) —
+    대신 최신 세션 시각 이후의 체결만 재생하는 방식으로 장부를 새로 연다.
+    """
+    registry.append_event(EVENT_PAPER_SESSION, "audit", {
+        "strategy_id": strategy_id,
+        "initial_cash_krw": initial_cash_krw,
+        "mode": "research",
+        "reset_reason": reason,
+    })
+
+
 def start_or_resume_session(
     registry: Registry, strategy_id: str, initial_cash_krw: float
 ) -> PaperPortfolio:
-    """세션 시작(최초 1회 기록) 또는 registry 체결 로그 재생으로 복원."""
+    """세션 시작(최초 1회 기록) 또는 **최신 세션 이후** 체결 재생으로 복원."""
     sessions = [
         e for e in registry.events(EVENT_PAPER_SESSION)
         if e["payload"].get("strategy_id") == strategy_id
@@ -67,12 +83,16 @@ def start_or_resume_session(
             "mode": "research",  # 승격 경로 없음 — 순방향 검증 전용
         })
         return PaperPortfolio(cash=initial_cash_krw)
-    cash = float(sessions[0]["payload"]["initial_cash_krw"])
+    latest = sessions[-1]  # 리셋 지원 — 마지막 세션이 현재 장부
+    cash = float(latest["payload"]["initial_cash_krw"])
+    session_started_at = latest["created_at"]
     p = PaperPortfolio(cash=cash)
     for row in registry.rows("orders"):
         # (id, intent_hash, status, payload, created_at)
         if row[2] != ORDER_STATUS_PAPER_FILLED:
             continue
+        if row[4] < session_started_at:
+            continue  # 이전 세션의 체결 — 감사 기록일 뿐 현재 장부가 아니다
         fill = json.loads(row[3])
         qty, px = float(fill["qty"]), float(fill["exec_price"])
         fee, tax = float(fill.get("commission", 0.0)), float(fill.get("tax", 0.0))

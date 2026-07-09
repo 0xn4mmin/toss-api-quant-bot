@@ -480,8 +480,23 @@ def cmd_run(args: argparse.Namespace) -> int:
     paper = PaperPortfolio(cash=float(args.paper_cash))
     state = caps_mod.CapsState()
 
+    _fx_cache: dict[str, float] = {}
+
+    def _usdkrw() -> float:
+        if "rate" not in _fx_cache:
+            from quantbot.adapter.official import mkt as mkt_mod
+
+            _fx_cache["rate"] = float(
+                mkt_mod.exchange_rate(client, "USD", "KRW").rate
+            )
+        return _fx_cache["rate"]
+
     def quote(symbol: str) -> float:
-        return float(md.prices(client, [symbol])[0].lastPrice)
+        """KRW 환산 시세 — 통화는 응답 필드가 결정한다 (2026-07-09 실측 수정:
+        USD 가격이 원화 장부에 그대로 들어가 수량이 환율배로 부풀었음)."""
+        q = md.prices(client, [symbol])[0]
+        px = float(q.lastPrice)
+        return px * _usdkrw() if q.currency == "USD" else px
 
     gate = Gate(registry, CostModel.from_config(costs_cfg),
                 live_trading=False,  # Phase 7 전까지 무조건 페이퍼 (IMPL-07)
@@ -596,6 +611,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         last_week = weeks[-1] if weeks else None
         if not is_rebalance_due(now, paper_ctx["window"], last_week):
             return
+        _fx_cache.pop("rate", None)  # 사이클마다 환율 1회 갱신 (사이클 내 일관)
         closes = {}
         prices = {}
         for s in paper_ctx["universe"]:
@@ -603,7 +619,11 @@ def cmd_run(args: argparse.Namespace) -> int:
             import numpy as np
 
             closes[s] = np.array([float(c.closePrice) for c in page.candles])
-            prices[s] = float(closes[s][-1])
+            # 시그널(모멘텀·vol)은 비율 기반이라 통화 무관 — 장부 가격만 환산
+            last_ccy = page.candles[-1].currency if page.candles else "KRW"
+            prices[s] = float(closes[s][-1]) * (
+                _usdkrw() if last_ccy == "USD" else 1.0
+            )
         outcome = paperops.run_paper_cycle(
             registry=registry, inv=inv, caps_state=state, gate=gate,
             strategy=paper_ctx["strategy"], strategy_id=paper_ctx["sid"],
@@ -622,6 +642,14 @@ def cmd_run(args: argparse.Namespace) -> int:
             "strategy_id": paper_ctx["sid"],
             "week_key": week_key(now, paper_ctx["window"]),
         })
+        prev = paperops.last_cycle_payload(registry, paper_ctx["sid"])
+        # 방금 사이클 이벤트가 마지막이므로 그 직전 것을 찾는다
+        cycles = [
+            e["payload"] for e in registry.events(paperops.EVENT_PAPER_CYCLE)
+            if e["payload"].get("strategy_id") == paper_ctx["sid"]
+        ]
+        prev_nav = cycles[-2]["nav_krw"] if len(cycles) >= 2 else None
+        pnl_day = 0.0 if prev_nav is None else outcome.nav_krw - float(prev_nav)
         report = morning_report(
             date=now.date().isoformat(), strategy_id=paper_ctx["sid"],
             lifecycle_state="research-paper", exposure=sum(outcome.targets.values()),
@@ -632,7 +660,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             fills=list(outcome.cycle.fills),
             costs_krw=sum(f.get("commission", 0) + f.get("tax", 0)
                           for f in outcome.cycle.fills),
-            pnl_day_krw=0.0, equity_krw=outcome.nav_krw,
+            pnl_day_krw=pnl_day, equity_krw=outcome.nav_krw,
             holds=["fail-safe hold"] if state.hold else [],
             unverified=True,  # rejected 전략의 연구 가동 — 표기 의무 (RISK-04)
         )
@@ -666,6 +694,22 @@ def cmd_run(args: argparse.Namespace) -> int:
     except KeyboardInterrupt:
         registry.close()
         return 0
+
+
+def cmd_paper_reset(args: argparse.Namespace) -> int:
+    """페이퍼 장부 리셋 — 오염·재시작 시 새 세션을 연다 (감사 기록은 보존)."""
+    from quantbot.engine import paperops
+    from quantbot.engine.registry import Registry
+    from quantbot.strategy.loader import load_strategy
+
+    strategy = load_strategy(args.strategy)
+    sid = f"{strategy.meta.id}.v{strategy.meta.version}"
+    with Registry(Path(args.var_dir) / "registry.db") as registry:
+        paperops.reset_session(registry, sid, float(args.paper_cash), args.reason)
+        portfolio = paperops.start_or_resume_session(registry, sid, 0.0)
+    print(f"{sid} 페이퍼 세션 리셋 — 새 장부 현금 {portfolio.cash:,.0f}원 "
+          f"(이전 체결은 감사 기록으로 보존, 재생에서 제외)")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -728,6 +772,13 @@ def main(argv: list[str] | None = None) -> int:
                        help="연구용 페이퍼 사이클을 돌릴 전략 파일 "
                             "(판정 아티팩트 필요 — 예: strategies/dual-momentum.v3.yaml)")
     p_run.set_defaults(fn=cmd_run)
+
+    p_reset = sub.add_parser("paper-reset", help="페이퍼 장부 리셋 (새 세션)")
+    p_reset.add_argument("--strategy", required=True)
+    p_reset.add_argument("--paper-cash", default="5000000")
+    p_reset.add_argument("--reason", required=True, help="리셋 사유 (registry 기록)")
+    p_reset.add_argument("--var-dir", default="var")
+    p_reset.set_defaults(fn=cmd_paper_reset)
 
     args = parser.parse_args(argv)
     return args.fn(args)
