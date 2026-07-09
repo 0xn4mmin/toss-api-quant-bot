@@ -643,7 +643,11 @@ def cmd_run(args: argparse.Namespace) -> int:
     try:
         while True:
             offset = poll_once(tg, router.handle, offset)
-            watcher.check_heartbeat()
+            # 주의: watcher.check_heartbeat()는 여기서 부르지 않는다 —
+            # run은 push 스트림을 소비하지 않으므로(스트림 배선은 Phase 5)
+            # 하트비트 감시가 "존재하지 않는 스트림의 침묵"을 hold로 오판한다
+            # (2026-07-09 실측: 스모크 실행 90초 만에 가짜 fail-safe hold 발동).
+            # 스트림이 붙는 날 process()/check_heartbeat()가 함께 배선된다.
             run_paper_if_due()
     except KeyboardInterrupt:
         registry.close()
