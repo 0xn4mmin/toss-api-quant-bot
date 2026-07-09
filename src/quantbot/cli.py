@@ -640,15 +640,29 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     print(f"페이퍼 운영 시작 — 명령 {sorted(ROUTING)} (중단: Ctrl-C)")
     offset = None
+    import time as time_mod
+
+    from quantbot.adapter.official.http import OpenApiError
+    from quantbot.interface.telegram import TelegramError
+
+    error_backoff_s = float(tg_cfg.get("poll_timeout_s", 25))
     try:
         while True:
-            offset = poll_once(tg, router.handle, offset)
             # 주의: watcher.check_heartbeat()는 여기서 부르지 않는다 —
             # run은 push 스트림을 소비하지 않으므로(스트림 배선은 Phase 5)
-            # 하트비트 감시가 "존재하지 않는 스트림의 침묵"을 hold로 오판한다
-            # (2026-07-09 실측: 스모크 실행 90초 만에 가짜 fail-safe hold 발동).
-            # 스트림이 붙는 날 process()/check_heartbeat()가 함께 배선된다.
-            run_paper_if_due()
+            # 하트비트 감시가 "존재하지 않는 스트림의 침묵"을 hold로 오판한다.
+            try:
+                offset = poll_once(tg, router.handle, offset)
+                run_paper_if_due()
+            except (TelegramError, OpenApiError) as e:
+                # 상주 모드(launchd): 일시적 네트워크 오류는 죽을 일이 아니다 —
+                # 기록하고 물러났다 계속. 알 수 없는 예외는 그대로 죽어서
+                # launchd가 재시작하게 둔다(재시작은 registry 재생으로 안전).
+                logging.getLogger("quantbot.run").warning(
+                    "일시 오류 — %s: %s (%.0fs 후 재시도)",
+                    type(e).__name__, str(e)[:200], error_backoff_s,
+                )
+                time_mod.sleep(error_backoff_s)
     except KeyboardInterrupt:
         registry.close()
         return 0

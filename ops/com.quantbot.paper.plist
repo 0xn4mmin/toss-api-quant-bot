@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+ "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- quantbot 연구용 페이퍼 상주 서비스 (launchd LaunchAgent)
+     설치:  cp ops/com.quantbot.paper.plist ~/Library/LaunchAgents/
+            launchctl load ~/Library/LaunchAgents/com.quantbot.paper.plist
+     중지:  launchctl unload ~/Library/LaunchAgents/com.quantbot.paper.plist
+     로그:  tail -f var/logs/paper.out.log var/logs/paper.err.log
+     ⚠ 반드시 포그라운드 실행(quantbot run)을 먼저 종료할 것 — 이중 실행 시
+       텔레그램 getUpdates 충돌(409). 주차 키 덕에 사이클 중복은 안 나지만
+       폴링이 서로를 밀어낸다. -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.quantbot.paper</string>
+    <key>ProgramArguments</key>
+    <array>
+        <!-- caffeinate -s: 이 프로세스가 사는 동안 시스템 잠자기 방지 (AC 전원 시).
+             배터리 + 뚜껑 닫힘은 막지 못한다 — 전원 연결 필수, 장기적으로는
+             상시 가동 박스(미니PC 등) 권장 -->
+        <string>/usr/bin/caffeinate</string>
+        <string>-s</string>
+        <string>/opt/homebrew/bin/uv</string>
+        <string>run</string>
+        <string>quantbot</string>
+        <string>run</string>
+        <string>--strategy</string>
+        <string>strategies/dual-momentum.v3.yaml</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/skykim/toss-api-quant-bot</string>
+    <key>StandardOutPath</key>
+    <string>/Users/skykim/toss-api-quant-bot/var/logs/paper.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/skykim/toss-api-quant-bot/var/logs/paper.err.log</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>
